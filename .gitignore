@@ -1,5 +1,6 @@
-# Large binaries, model weights & raw media
+# Large binaries, model weights, enhancement tools & raw media
 bin/
+tools/
 models/
 build/
 third_party/

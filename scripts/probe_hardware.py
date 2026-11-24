@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-localVid Hardware Diagnostic Probe (CUDA + Vulkan + System RAM).
+PicoVid Hardware Diagnostic Probe (CUDA + Vulkan + System RAM + Disk).
 Reads real GPU VRAM budget, Vulkan maxMemoryAllocationSize, driver capabilities,
-and sd-cli --list-devices output, then emits a structured JSON report.
+total/available system RAM, target drive free disk space, and sd-cli --list-devices
+output, then emits a structured JSON report.
 
 Licensed under the Apache License, Version 2.0.
 """
@@ -10,6 +11,7 @@ Licensed under the Apache License, Version 2.0.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import datetime
 import json
 import os
@@ -40,7 +42,33 @@ def run_cmd(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
         return -2, "", f"command timed out after {timeout}s"
 
 
-def probe_system() -> dict[str, Any]:
+def probe_disk(target_dir: Path | None = None) -> dict[str, Any]:
+    path = (target_dir or Path.cwd()).resolve()
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    try:
+        du = shutil.disk_usage(path)
+        return {
+            "path": str(path),
+            "drive": path.drive or str(path.anchor),
+            "disk_total_bytes": du.total,
+            "disk_free_bytes": du.free,
+            "disk_total_gib": round(du.total / (1024**3), 2),
+            "disk_free_gib": round(du.free / (1024**3), 2),
+        }
+    except OSError:
+        return {
+            "path": str(path),
+            "drive": "",
+            "disk_total_bytes": None,
+            "disk_free_bytes": None,
+            "disk_total_gib": None,
+            "disk_free_gib": None,
+        }
+
+
+def probe_system(target_dir: Path | None = None) -> dict[str, Any]:
+    disk = probe_disk(target_dir)
     info: dict[str, Any] = {
         "os": platform.system(),
         "os_release": platform.release(),
@@ -49,20 +77,48 @@ def probe_system() -> dict[str, Any]:
         "cpu_threads": os.cpu_count(),
         "ram_total_bytes": None,
         "ram_total_gib": None,
+        "ram_available_bytes": None,
+        "ram_available_gib": None,
+        "disk_drive": disk["drive"],
+        "disk_total_gib": disk["disk_total_gib"],
+        "disk_free_gib": disk["disk_free_gib"],
+        "disk_free_bytes": disk["disk_free_bytes"],
     }
     if platform.system() == "Windows":
-        rc, out, _ = run_cmd(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
-            ]
-        )
-        if rc == 0 and out.strip().isdigit():
-            b = int(out.strip())
-            info["ram_total_bytes"] = b
-            info["ram_total_gib"] = round(b / (1024**3), 2)
+        try:
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):  # type: ignore[attr-defined]
+                info["ram_total_bytes"] = int(stat.ullTotalPhys)
+                info["ram_total_gib"] = round(stat.ullTotalPhys / (1024**3), 2)
+                info["ram_available_bytes"] = int(stat.ullAvailPhys)
+                info["ram_available_gib"] = round(stat.ullAvailPhys / (1024**3), 2)
+        except Exception:
+            rc, out, _ = run_cmd(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
+                ]
+            )
+            if rc == 0 and out.strip().isdigit():
+                b = int(out.strip())
+                info["ram_total_bytes"] = b
+                info["ram_total_gib"] = round(b / (1024**3), 2)
     else:
         try:
             with open("/proc/meminfo", "r", encoding="utf-8") as f:
@@ -71,7 +127,10 @@ def probe_system() -> dict[str, Any]:
                         kb = int(line.split()[1])
                         info["ram_total_bytes"] = kb * 1024
                         info["ram_total_gib"] = round(kb / (1024**2), 2)
-                        break
+                    elif line.startswith("MemAvailable:"):
+                        kb = int(line.split()[1])
+                        info["ram_available_bytes"] = kb * 1024
+                        info["ram_available_gib"] = round(kb / (1024**2), 2)
         except OSError:
             pass
     return info

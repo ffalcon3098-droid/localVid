@@ -1,5 +1,5 @@
 diff --git a/src/core/segment_weight_pipeline.cpp b/src/core/segment_weight_pipeline.cpp
-index 2df9a89..a601aa2 100644
+index 2df9a89..dc99458 100644
 --- a/src/core/segment_weight_pipeline.cpp
 +++ b/src/core/segment_weight_pipeline.cpp
 @@ -1,5 +1,6 @@
@@ -9,7 +9,7 @@ index 2df9a89..a601aa2 100644
  #include <utility>
  
  #include "core/ggml_graph_cut.h"
-@@ -95,7 +96,35 @@ namespace sd {
+@@ -95,7 +96,37 @@ namespace sd {
          for (const auto& request : requests) {
              if (!manager->ensure_compute_backend_capacity(request, segment_params_[segment_index],
                                                            preferred_eviction_order(), protected_params)) {
@@ -27,7 +27,9 @@ index 2df9a89..a601aa2 100644
 +                    return false;
 +                }
 +                if (do_drop) {
-+                    disable();
++                    // Drop ONLY the currently queued prefetch for this tight segment;
++                    // keep async prefetch enabled for subsequent segments!
++                    clear();
 +                    protected_params = segment_params_[segment_index];
 +                }
 +                if (evict_past) {
@@ -46,7 +48,7 @@ index 2df9a89..a601aa2 100644
              }
          }
          return true;
-@@ -121,6 +150,13 @@ namespace sd {
+@@ -121,6 +152,13 @@ namespace sd {
      void SegmentWeightPipeline::segment_end() {
          if (auto manager = residency_manager_.lock()) {
              manager->release_compute_backend_params(pinned_params_);

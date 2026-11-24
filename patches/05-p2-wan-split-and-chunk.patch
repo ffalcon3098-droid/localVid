@@ -1,5 +1,5 @@
 diff --git a/src/model/diffusion/wan.hpp b/src/model/diffusion/wan.hpp
-index 124020e..6afb1d5 100644
+index 124020e..847f322 100644
 --- a/src/model/diffusion/wan.hpp
 +++ b/src/model/diffusion/wan.hpp
 @@ -129,7 +129,8 @@ namespace WAN {
@@ -156,7 +156,7 @@ index 124020e..6afb1d5 100644
  
              x = o_proj->forward(ctx, x);  // [N, n_token, dim]
              return x;
-@@ -198,12 +327,35 @@ namespace WAN {
+@@ -198,12 +327,41 @@ namespace WAN {
              auto norm_q = std::dynamic_pointer_cast<UnaryBlock>(blocks["norm_q"]);
              auto norm_k = std::dynamic_pointer_cast<UnaryBlock>(blocks["norm_k"]);
  
@@ -167,12 +167,18 @@ index 124020e..6afb1d5 100644
              auto v = v_proj->forward(ctx, context);  // [N, n_context, dim]
  
 +            static const int64_t cross_q_chunk = [] {
++                if (const char* ec = std::getenv("SD_WAN_CROSS_Q_CHUNK"); ec != nullptr && ec[0] != '\0') {
++                    const long long qc = std::atoll(ec);
++                    return qc > 0 ? static_cast<int64_t>(qc) : int64_t(0);
++                }
 +                const char* e = std::getenv("SD_WAN_ATTN_Q_CHUNK");
 +                if (e == nullptr || e[0] == '\0') {
 +                    return int64_t(0);
 +                }
 +                const long long q = std::atoll(e);
-+                return q > 0 ? static_cast<int64_t>(q) : int64_t(0);
++                // Cross-attn context is only ~512 tokens (not N_token), so 4096-token chunks
++                // fit easily in <650 MB while avoiding 14x tiny q_proj/o_proj GEMMs!
++                return q > 0 ? std::max<int64_t>(4096, static_cast<int64_t>(q)) : int64_t(0);
 +            }();
 +
 +            if (cross_q_chunk > 0 && cross_q_chunk < n_token) {
@@ -194,7 +200,7 @@ index 124020e..6afb1d5 100644
              x = ggml_ext_attention_ext(ctx, q, k, v, num_heads, nullptr, false, ctx->flash_attn_enabled);  // [N, n_token, dim]
  
              x = o_proj->forward(ctx, x);  // [N, n_token, dim]
-@@ -354,12 +506,26 @@ namespace WAN {
+@@ -354,12 +512,26 @@ namespace WAN {
                                       ggml_tensor* e,
                                       ggml_tensor* pe,
                                       ggml_tensor* context,
@@ -222,7 +228,7 @@ index 124020e..6afb1d5 100644
              auto modulation = params["modulation"];
              e               = ggml_add(ctx->ggml_ctx, e, modulation);  // [N, 6, dim] or [N, T, 6, dim]
              auto es         = ggml_ext_chunk(ctx, e, 6, 1);            // ([N, 1, dim], ...) or [N, T, 1, dim]
-@@ -376,23 +542,52 @@ namespace WAN {
+@@ -376,23 +548,52 @@ namespace WAN {
              auto y = norm1->forward(ctx, x);
              y      = ggml_add(ctx->ggml_ctx, y, modulate_mul(ctx->ggml_ctx, y, es[1]));
              y      = modulate_add(ctx->ggml_ctx, y, es[0]);
@@ -279,7 +285,7 @@ index 124020e..6afb1d5 100644
  
              x = ggml_add(ctx->ggml_ctx, x, modulate_mul(ctx->ggml_ctx, y, es[5]));
  
-@@ -796,7 +991,7 @@ namespace WAN {
+@@ -796,7 +997,7 @@ namespace WAN {
              for (int i = 0; i < config.num_layers; i++) {
                  auto block = std::dynamic_pointer_cast<WanAttentionBlock>(blocks["blocks." + std::to_string(i)]);
  
@@ -288,7 +294,7 @@ index 124020e..6afb1d5 100644
  
                  auto iter = config.vace_layers_mapping.find(i);
                  if (iter != config.vace_layers_mapping.end()) {
-@@ -991,7 +1186,13 @@ namespace WAN {
+@@ -991,7 +1192,13 @@ namespace WAN {
                                   float vace_strength                             = 1.f,
                                   const sd::Tensor<float>& audio_embed_tensor     = {},
                                   const sd::Tensor<float>& ref_latent_tensor      = {}) {

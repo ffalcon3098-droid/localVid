@@ -1,0 +1,234 @@
+{
+  "schema_version": "0.3.0",
+  "files": {
+    "wan22_ti2v_5b_turbo_q4": {
+      "path": "models/diffusion_models/Wan2_2-TI2V-5B-Turbo-Q4_K_M.gguf",
+      "expected_bytes": 3437927136,
+      "url": "https://huggingface.co/hum-ma/Wan2.2-TI2V-5B-Turbo-GGUF/resolve/main/Wan2_2-TI2V-5B-Turbo-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "desc": "Wan 2.2 TI2V-5B Turbo 4-Step T2V+I2V (Q4_K_M, 3.20 GiB, 5-sec fast clips)"
+    },
+    "wan22_vae": {
+      "path": "models/vae/wan2.2_vae.safetensors",
+      "expected_bytes": 1409400960,
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors",
+      "license": "apache-2.0",
+      "desc": "Wan 2.2 48-ch High-Compression Video VAE (4x16x16, 1.31 GiB, for TI2V-5B)"
+    },
+    "taew2_2": {
+      "path": "models/vae/taew2_2.safetensors",
+      "expected_bytes": 22848048,
+      "url": "https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_2.safetensors",
+      "license": "mit",
+      "desc": "TAEHV Tiny AutoEncoder for Wan 2.2 TI2V-5B (--fast-preview, 1.9s decode, 21.8 MiB)"
+    },
+    "wan22_t2v_rapid_v10": {
+      "path": "models/diffusion_models/wan2.2-t2v-rapid-aio-v10-Q4_K.gguf",
+      "expected_bytes": 9650100736,
+      "url": "https://huggingface.co/befox/WAN2.2-14B-Rapid-AllInOne-GGUF/resolve/main/v10/wan2.2-t2v-rapid-aio-v10-Q4_K.gguf",
+      "license": "apache-2.0",
+      "desc": "Wan 2.2 14B T2V Rapid-AIO v10 (pre-merged 4-step, Q4_K, 8.99 GiB)"
+    },
+    "wan22_i2v_high_q4": {
+      "path": "models/diffusion_models/wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412-Q4_K_M.gguf",
+      "expected_bytes": 9661569699,
+      "url": "https://huggingface.co/Abiray/Wan2.2-LightX2V-260412-4STEP-GGUF/resolve/main/high_noise_260412/wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "desc": "Wan 2.2 14B I2V LightX2V 4-Step HighNoise Expert (Q4_K_M, 9.00 GiB)"
+    },
+    "wan22_i2v_low_q4": {
+      "path": "models/diffusion_models/wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412-Q4_K_M.gguf",
+      "expected_bytes": 9661569699,
+      "url": "https://huggingface.co/Abiray/Wan2.2-LightX2V-260412-4STEP-GGUF/resolve/main/low_noise_260412/wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "desc": "Wan 2.2 14B I2V LightX2V 4-Step LowNoise Expert (Q4_K_M, 9.00 GiB)"
+    },
+    "wan22_i2v_high_q3": {
+      "path": "models/diffusion_models/wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412-Q3_K_M.gguf",
+      "expected_bytes": 7185947299,
+      "url": "https://huggingface.co/Abiray/Wan2.2-LightX2V-260412-4STEP-GGUF/resolve/main/high_noise_260412/wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412-Q3_K_M.gguf",
+      "license": "apache-2.0",
+      "desc": "Wan 2.2 14B I2V LightX2V 4-Step HighNoise Expert (Q3_K_M Compact, 6.69 GiB)"
+    },
+    "wan22_i2v_low_q3": {
+      "path": "models/diffusion_models/wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412-Q3_K_M.gguf",
+      "expected_bytes": 7185947299,
+      "url": "https://huggingface.co/Abiray/Wan2.2-LightX2V-260412-4STEP-GGUF/resolve/main/low_noise_260412/wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412-Q3_K_M.gguf",
+      "license": "apache-2.0",
+      "desc": "Wan 2.2 14B I2V LightX2V 4-Step LowNoise Expert (Q3_K_M Compact, 6.69 GiB)"
+    },
+    "umt5_xxl_q4_k_m": {
+      "path": "models/text_encoders/umt5-xxl-encoder-Q4_K_M.gguf",
+      "expected_bytes": 3655145312,
+      "url": "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "desc": "UMT5-XXL Text Encoder for Wan 2.2 T2V/I2V (Q4_K_M, 3.40 GiB, CPU)"
+    },
+    "wan21_vae": {
+      "path": "models/vae/wan_2.1_vae.safetensors",
+      "expected_bytes": 253815318,
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+      "license": "apache-2.0",
+      "desc": "Wan 2.1 Video VAE (FP16/BF16, 242 MiB)"
+    },
+    "taew2_1": {
+      "path": "models/vae/taew2_1.safetensors",
+      "expected_bytes": 22642902,
+      "url": "https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_1.safetensors",
+      "license": "mit",
+      "desc": "TAEHV Tiny AutoEncoder for Wan 2.1/2.2 (--fast-preview, 21.6 MiB)"
+    },
+    "z_image_turbo_q4_k": {
+      "path": "models/diffusion_models/z_image_turbo-Q4_K.gguf",
+      "expected_bytes": 3864250304,
+      "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K.gguf",
+      "license": "apache-2.0",
+      "desc": "Z-Image-Turbo 6B First-Frame T2I DiT (Q4_K, 3.60 GiB)"
+    },
+    "qwen3_4b_q4_k_m": {
+      "path": "models/text_encoders/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "expected_bytes": 2497281120,
+      "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "desc": "Qwen3-4B-Instruct-2507 Text Encoder for Z-Image-Turbo (Q4_K_M, 2.33 GiB)"
+    },
+    "flux_ae": {
+      "path": "models/vae/ae.safetensors",
+      "expected_bytes": 335304388,
+      "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+      "license": "apache-2.0",
+      "desc": "Z-Image / FLUX 16-ch Image VAE ae.safetensors (ungated, 320 MiB)"
+    }
+  },
+  "pipelines": {
+    "ti2v_5b": {
+      "label": "Wan 2.2 TI2V-5B Turbo (4-step Fast 5s T2V + I2V)",
+      "diffusion_model": "wan22_ti2v_5b_turbo_q4",
+      "t5xxl": "umt5_xxl_q4_k_m",
+      "vae": "wan22_vae",
+      "defaults": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "flow_shift": 5.0,
+        "fps": 24,
+        "backend_p1": "te=cpu",
+        "vae_encode_tiling": "320x192",
+        "backend_p1_fallback": "te=cpu,vae=cpu",
+        "dit_to_vae_in_p2": false
+      }
+    },
+    "t2v": {
+      "label": "Wan 2.2 14B T2V Rapid-AIO v10 (4-step)",
+      "diffusion_model": "wan22_t2v_rapid_v10",
+      "t5xxl": "umt5_xxl_q4_k_m",
+      "vae": "wan21_vae",
+      "taesd": "taew2_1",
+      "defaults": {
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampler": "euler_a",
+        "scheduler": "beta",
+        "flow_shift": 5.0
+      }
+    },
+    "i2v": {
+      "label": "Wan 2.2 14B I2V LightX2V 4-Step MoE (Q4_K_M)",
+      "high_noise_model": "wan22_i2v_high_q4",
+      "low_noise_model": "wan22_i2v_low_q4",
+      "t5xxl": "umt5_xxl_q4_k_m",
+      "vae": "wan21_vae",
+      "defaults": {
+        "steps": 4,
+        "high_noise_steps": 2,
+        "cfg_scale": 1.0,
+        "sampler": "euler",
+        "scheduler": "discrete",
+        "flow_shift": 5.0,
+        "backend_p1": "te=cpu",
+        "vae_encode_tiling": "320x192",
+        "backend_p1_fallback": "te=cpu,vae=cpu",
+        "dit_to_vae_in_p2": false
+      }
+    },
+    "i2v_compact": {
+      "label": "Wan 2.2 14B I2V LightX2V 4-Step MoE (Q3_K_M Compact)",
+      "high_noise_model": "wan22_i2v_high_q3",
+      "low_noise_model": "wan22_i2v_low_q3",
+      "t5xxl": "umt5_xxl_q4_k_m",
+      "vae": "wan21_vae",
+      "defaults": {
+        "steps": 4,
+        "high_noise_steps": 2,
+        "cfg_scale": 1.0,
+        "sampler": "euler",
+        "scheduler": "discrete",
+        "flow_shift": 5.0,
+        "backend_p1": "te=cpu",
+        "vae_encode_tiling": "320x192",
+        "backend_p1_fallback": "te=cpu,vae=cpu",
+        "dit_to_vae_in_p2": false
+      }
+    },
+    "t2i": {
+      "label": "Z-Image-Turbo 6B (Apache 2.0, Fast First-Frame T2I)",
+      "diffusion_model": "z_image_turbo_q4_k",
+      "llm": "qwen3_4b_q4_k_m",
+      "vae": "flux_ae",
+      "defaults": {
+        "steps": 6,
+        "cfg_scale": 1.0,
+        "sampler": "euler",
+        "scheduler": "discrete",
+        "backend": "te=cpu",
+        "flash_attn_vulkan": "off",
+        "flash_attn_cuda": "on",
+        "max_vram_6gb": 2.0,
+        "max_vram_4gb": 1.6
+      }
+    }
+  },
+  "download_profiles": {
+    "fast-5b": {
+      "desc": "Wan 2.2 TI2V-5B Turbo 4-Step T2V+I2V (5-sec fast videos, 7.92 GiB total / 4.51 GiB add-on)",
+      "required": ["wan22_ti2v_5b_turbo_q4", "umt5_xxl_q4_k_m", "wan22_vae"],
+      "optional": ["taew2_2"]
+    },
+    "t2v": {
+      "desc": "Wan 2.2 14B Text-to-Video (Rapid-AIO v10 Q4_K + UMT5-XXL + Wan 2.1 VAE)",
+      "required": ["wan22_t2v_rapid_v10", "umt5_xxl_q4_k_m", "wan21_vae"],
+      "optional": ["taew2_1"]
+    },
+    "t2i": {
+      "desc": "Z-Image-Turbo 6B First-Frame Text-to-Image (6.24 GiB, Apache 2.0)",
+      "required": ["z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae"],
+      "optional": []
+    },
+    "i2v": {
+      "desc": "Wan 2.2 14B Image-to-Video LightX2V 4-Step Q4_K_M pair (18.00 GiB + shared TE/VAE)",
+      "required": ["wan22_i2v_high_q4", "wan22_i2v_low_q4", "umt5_xxl_q4_k_m", "wan21_vae"],
+      "optional": []
+    },
+    "i2v-compact": {
+      "desc": "Wan 2.2 14B Image-to-Video LightX2V 4-Step Q3_K_M compact pair (13.38 GiB + shared TE/VAE)",
+      "required": ["wan22_i2v_high_q3", "wan22_i2v_low_q3", "umt5_xxl_q4_k_m", "wan21_vae"],
+      "optional": []
+    },
+    "studio": {
+      "desc": "Studio Mode: Z-Image-Turbo (T2I) + Wan 2.2 I2V Q4_K_M (T2I -> I2V)",
+      "required": ["z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae", "wan22_i2v_high_q4", "wan22_i2v_low_q4", "umt5_xxl_q4_k_m", "wan21_vae"],
+      "optional": []
+    },
+    "studio-compact": {
+      "desc": "Studio Mode Compact: Z-Image-Turbo (T2I) + Wan 2.2 I2V Q3_K_M (lower disk footprint)",
+      "required": ["z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae", "wan22_i2v_high_q3", "wan22_i2v_low_q3", "umt5_xxl_q4_k_m", "wan21_vae"],
+      "optional": []
+    },
+    "all": {
+      "desc": "Complete PicoVid v0.3 set (TI2V-5B Turbo + 14B T2V + 14B I2V Q4_K_M + Z-Image-Turbo T2I + TAEHV)",
+      "required": ["wan22_ti2v_5b_turbo_q4", "wan22_vae", "wan22_t2v_rapid_v10", "wan22_i2v_high_q4", "wan22_i2v_low_q4", "umt5_xxl_q4_k_m", "wan21_vae", "z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae"],
+      "optional": ["taew2_1"]
+    }
+  }
+}

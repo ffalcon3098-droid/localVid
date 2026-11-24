@@ -60,11 +60,11 @@ DEFAULT_SAMPLE_PROMPT = (
 )
 
 BANNER_ART = r"""
-  _                 ___     ___     _
- | | ___   ___ __ _| \ \   / (_) __| |
- | |/ _ \ / __/ _` | |\ \ / /| |/ _` |
- | | (_) | (_| (_| | | \ V / | | (_| |
- |_|\___/ \___\__,_|_|  \_/  |_|\__,_|
+  ____  _           __     ___     _
+ |  _ \(_) ___ ___  \ \   / (_) __| |
+ | |_) | |/ __/ _ \  \ \ / /| |/ _` |
+ |  __/| | (_| (_) |  \ V / | | (_| |
+ |_|   |_|\___\___/    \_/  |_|\__,_|
 """
 
 
@@ -297,6 +297,9 @@ class DashboardConfig:
     vae_label: str
     log_path: pathlib.Path | None = None
     demo_mode: bool = False
+    stage4_label: str = "4. H.264 MP4 Paketleme"
+    dit_label: str = "Wan 2.2 14B"
+    total_blocks: int = 40
 
 
 class BaseDashboard:
@@ -311,9 +314,9 @@ class BaseDashboard:
         self._lock = threading.Lock()
         self.stages: dict[str, StageState] = {
             "te": StageState("te", "1. Metin Kodlama (UMT5-XXL CPU)"),
-            "dit": StageState("dit", "2. DiT Örnekleme (Wan 2.2 14B)"),
+            "dit": StageState("dit", f"2. DiT Örnekleme ({config.dit_label})"),
             "vae": StageState("vae", f"3. VAE Decode ({config.vae_label})"),
-            "mp4": StageState("mp4", "4. H.264 MP4 Paketleme"),
+            "mp4": StageState("mp4", config.stage4_label),
         }
 
     def start(self) -> None:
@@ -402,11 +405,11 @@ class PlainDashboard(BaseDashboard):
         super().start()
         c = self.config
         print(
-            f"[localVid] GPU: {c.gpu_name} ({c.backend.upper()}, {c.vram_class}, "
+            f"[PicoVid] GPU: {c.gpu_name} ({c.backend.upper()}, {c.vram_class}, "
             f"bütçe {c.vram_budget_gib:.2f} GiB)"
         )
         print(
-            f"[localVid] Profil: {c.profile_name} | {c.width}x{c.height} x {c.frames}f "
+            f"[PicoVid] Profil: {c.profile_name} | {c.width}x{c.height} x {c.frames}f "
             f"({c.frames / max(1, c.fps):.1f}s) | {c.steps} adım | {c.vae_label}"
         )
 
@@ -416,18 +419,18 @@ class PlainDashboard(BaseDashboard):
         if not was_running:
             st = self.stages[key]
             suffix = f" - {detail}" if detail else ""
-            print(f"[localVid] >> {st.label}{suffix}", flush=True)
+            print(f"[PicoVid] >> {st.label}{suffix}", flush=True)
 
     def finish_stage(self, key: str, detail: str = "", elapsed_override: float | None = None) -> None:
         super().finish_stage(key, detail, elapsed_override)
         st = self.stages[key]
         suffix = f" ({detail})" if detail else ""
-        print(f"[localVid] [OK] {st.label} tamamlandı: {st.elapsed_sec:.1f}s{suffix}", flush=True)
+        print(f"[PicoVid] [OK] {st.label} tamamlandı: {st.elapsed_sec:.1f}s{suffix}", flush=True)
 
     def fail_stage(self, key: str, detail: str = "") -> None:
         super().fail_stage(key, detail)
         st = self.stages[key]
-        print(f"[localVid] [HATA] {st.label}: {detail}", file=sys.stderr, flush=True)
+        print(f"[PicoVid] [HATA] {st.label}: {detail}", file=sys.stderr, flush=True)
 
     def render_summary(
         self,
@@ -441,7 +444,7 @@ class PlainDashboard(BaseDashboard):
         ded_peak = vram.get("peak_ded_mib")
         shr_peak = vram.get("peak_shr_mib")
         print("-" * 64)
-        print(f"[localVid] Durum : {'TAMAMLANDI' if success else 'BAŞARISIZ'} ({total:.1f}s)")
+        print(f"[PicoVid] Durum : {'TAMAMLANDI' if success else 'BAŞARISIZ'} ({total:.1f}s)")
         for st in self.stages.values():
             print(f"  - {st.label}: {st.status} ({st.elapsed_sec:.1f}s)")
         if ded_peak is not None:
@@ -638,7 +641,7 @@ class RichDashboard(BaseDashboard):
 
         return Panel(
             body,
-            title=f"[bold cyan]localVid v0.1.0{demo_tag}[/bold cyan] · [white]Wan 2.2 14B Motor Paneli[/white]",
+            title=f"[bold cyan]PicoVid v0.3.0{demo_tag}[/bold cyan] · [white]{c.dit_label} Motor Paneli[/white]",
             subtitle="[dim]Ctrl+C ile iptal · Ham loglar .log dosyasına kaydedilir[/dim]",
             border_style="cyan",
             box=box.ROUNDED,
@@ -787,6 +790,9 @@ def run_process_monitored(
     dit_t0 = 0.0
     dit_steps_total = max(1, total_steps)
     dit_steps_done = 0
+    dit_pass_index = 0
+    dit_pass_base_steps = 0
+    dit_pass_steps = dit_steps_total
     dit_segs_total = 0
     dit_last_seg = 0
     in_taehv = False
@@ -795,8 +801,8 @@ def run_process_monitored(
     vae_t0 = time.monotonic()
 
     if phase == "process1":
-        dashboard.start_stage("te", detail="UMT5-XXL yükleniyor...", determinate=False)
-        dashboard.set_status("Metin kodlayıcı (UMT5-XXL CPU) başlatılıyor...")
+        dashboard.start_stage("te", detail="Metin / Görsel kodlama başlıyor...", determinate=False)
+        dashboard.set_status("Ön işleme (UMT5-XXL / I2V VAE Encode CPU) başlatılıyor...")
     else:
         dashboard.start_stage("vae", detail="Wan 2.1 VAE başlatılıyor...", determinate=False)
         dashboard.set_status("Ayrı süreç Wan 2.1 VAE yükleniyor...")
@@ -819,7 +825,12 @@ def run_process_monitored(
                 dashboard.add_error(line)
 
         if phase == "process1":
-            # Stage 1: Text Encoder
+            # Stage 1: Text Encoder (+ I2V VAE Encode on CPU)
+            if "vae_encode" in line.lower() or "computing vae encode graph" in line.lower():
+                dashboard.update_stage("te", detail="I2V ilk kare kodlanıyor (CPU)...")
+                dashboard.set_status("Wan 2.1 VAE (CPU) ilk kareyi kodluyor...")
+                continue
+
             if "umt5" in line.lower() and "loading" in line.lower():
                 dashboard.update_stage("te", detail="UMT5-XXL ağırlıkları okunuyor...")
                 dashboard.set_status("UMT5-XXL CPU tensörleri yükleniyor...")
@@ -839,20 +850,36 @@ def run_process_monitored(
                 dashboard.set_status(f"Metin kodlama tamamlandı ({sec:.1f}s)")
                 continue
 
-            # Stage 2: DiT Sampling
+            # Stage 2: DiT Sampling (handles both single-expert T2V and dual-expert High->Low I2V!)
             m_samp = RE_SAMPLE_START.search(line)
             if m_samp:
                 if dashboard.stages["te"].status != "done":
                     dashboard.finish_stage("te", detail="Tamamlandı")
-                dit_started = True
-                dit_t0 = time.monotonic()
-                dit_steps_total = max(1, int(m_samp.group(2)))
-                dashboard.start_stage(
-                    "dit",
-                    detail=f"Adım 1/{dit_steps_total} · {m_samp.group(1)}",
-                    determinate=True,
-                )
-                dashboard.set_status(f"DiT örnekleme başladı ({m_samp.group(1)}, {dit_steps_total} adım)")
+                pass_steps = max(1, int(m_samp.group(2)))
+                if not dit_started:
+                    dit_started = True
+                    dit_t0 = time.monotonic()
+                    dit_pass_index = 1
+                    dit_pass_base_steps = 0
+                    dit_pass_steps = pass_steps
+                    dit_steps_total = max(dit_steps_total, pass_steps)
+                    dashboard.start_stage(
+                        "dit",
+                        detail=f"Adım 1/{dit_steps_total} · {m_samp.group(1)}",
+                        determinate=True,
+                    )
+                    dashboard.set_status(f"DiT örnekleme başladı ({m_samp.group(1)}, toplam {dit_steps_total} adım)")
+                else:
+                    # Second expert pass (Wan 2.2 MoE HighNoise -> LowNoise handoff!)
+                    dit_pass_index += 1
+                    dit_pass_base_steps = max(dit_steps_done, dit_pass_base_steps + dit_pass_steps)
+                    dit_steps_done = dit_pass_base_steps
+                    dit_pass_steps = pass_steps
+                    dit_steps_total = max(dit_steps_total, dit_pass_base_steps + pass_steps)
+                    dit_last_seg = 0
+                    cur_s = min(dit_steps_total, dit_steps_done + 1)
+                    dashboard.update_stage("dit", detail=f"Adım {cur_s}/{dit_steps_total} · LowNoise uzmanı")
+                    dashboard.set_status(f"MoE geçişi: LowNoise uzmanına geçildi (Adım {cur_s}/{dit_steps_total})")
                 continue
 
             m_segs = RE_TOTAL_SEGS.search(line)
@@ -862,7 +889,7 @@ def run_process_monitored(
                     dit_started = True
                     dit_t0 = time.monotonic()
                     dashboard.start_stage("dit", detail=f"Adım 1/{dit_steps_total}", determinate=True)
-                dashboard.set_status(f"Wan 2.2 14B grafik planı hazır ({dit_segs_total} segment/adım)")
+                dashboard.set_status(f"{dashboard.config.dit_label} grafik planı hazır ({dit_segs_total} segment/adım)")
                 continue
 
             m_st = RE_SEG_TIMING.search(line)
@@ -891,7 +918,8 @@ def run_process_monitored(
                     if m_blk:
                         blk_num = int(m_blk.group(1)) + 1
                         sub = m_blk.group(2)
-                        det = f"Adım {cur_step}/{dit_steps_total} · Blok {blk_num}/40 ({sub})"
+                        tot_blk = dashboard.config.total_blocks
+                        det = f"Adım {cur_step}/{dit_steps_total} · Blok {blk_num}/{tot_blk} ({sub})"
                     else:
                         det = f"Adım {cur_step}/{dit_steps_total} · {seg_name}"
 
@@ -899,7 +927,7 @@ def run_process_monitored(
                     dashboard.set_status(f"{det} · {seg_ms:.0f} ms")
                     continue
 
-            # Progress bar lines: either DiT step (1/4) or TAEHV tile (12/49)
+            # Progress bar lines: either DiT step (1/4 or 1/2 in dual-expert) or TAEHV tile (12/49)
             m_pb = RE_PROGRESS_BAR.search(line)
             if m_pb:
                 cur_i = int(m_pb.group(1))
@@ -917,25 +945,39 @@ def run_process_monitored(
                     det = f"TAEHV karo {cur_i}/{tot_i} ({rate_val:.1f} {rate_unit})"
                     dashboard.update_stage("vae", pct=pct, detail=det, eta_sec=eta_s)
                     dashboard.set_status(det)
-                elif dit_started and tot_i == dit_steps_total:
-                    dit_steps_done = max(dit_steps_done, cur_i)
-                    dit_last_seg = 0
+                elif not dit_started and "=" in raw_line and dashboard.stages["te"].status != "done":
+                    # I2V GPU-tiled vae_encode progress bar (e.g. 1/9..9/9 - 2.06s/it)
                     pct = (cur_i / tot_i) * 100.0
-                    det = f"Adım {cur_i}/{tot_i} tamamlandı ({rate_val:.1f} {rate_unit})"
-                    dashboard.update_stage("dit", pct=pct, detail=det, eta_sec=eta_s)
+                    det = f"I2V VAE Encode {cur_i}/{tot_i} ({rate_val:.2f} {rate_unit})"
+                    dashboard.update_stage("te", pct=pct, detail=det, eta_sec=eta_s)
+                    dashboard.set_status(det)
+                elif dit_started and tot_i == dit_pass_steps:
+                    global_done = min(dit_steps_total, dit_pass_base_steps + cur_i)
+                    dit_steps_done = max(dit_steps_done, global_done)
+                    dit_last_seg = 0
+                    pct = (dit_steps_done / dit_steps_total) * 100.0
+                    elapsed = time.monotonic() - dit_t0
+                    rem_steps = max(0, dit_steps_total - dit_steps_done)
+                    calc_eta = (elapsed / dit_steps_done * rem_steps) if dit_steps_done > 0 else eta_s
+                    det = f"Adım {dit_steps_done}/{dit_steps_total} tamamlandı ({rate_val:.1f} {rate_unit})"
+                    dashboard.update_stage("dit", pct=pct, detail=det, eta_sec=calc_eta)
                     dashboard.set_status(det)
                 continue
 
             m_sdone = RE_SAMPLE_DONE.search(line)
             if m_sdone:
                 sec = float(m_sdone.group(1))
-                dashboard.finish_stage("dit", detail=f"{dit_steps_total}/{dit_steps_total} adım ({sec:.1f}s)", elapsed_override=sec)
-                if fast_preview:
-                    in_taehv = True
-                    dashboard.start_stage("vae", detail="TAEHV decode başlıyor...", determinate=True)
-                    dashboard.set_status(f"DiT tamamlandı ({sec:.1f}s) · TAEHV hızlı decode başlıyor...")
+                if dit_steps_done >= dit_steps_total or dit_pass_base_steps + dit_pass_steps >= dit_steps_total:
+                    total_dit_sec = time.monotonic() - dit_t0 if dit_pass_index > 1 else sec
+                    dashboard.finish_stage("dit", detail=f"{dit_steps_total}/{dit_steps_total} adım ({total_dit_sec:.1f}s)", elapsed_override=total_dit_sec)
+                    if fast_preview:
+                        in_taehv = True
+                        dashboard.start_stage("vae", detail="TAEHV decode başlıyor...", determinate=True)
+                        dashboard.set_status(f"DiT tamamlandı ({total_dit_sec:.1f}s) · TAEHV hızlı decode başlıyor...")
+                    else:
+                        dashboard.set_status(f"DiT tamamlandı ({total_dit_sec:.1f}s) · Latent kaydediliyor...")
                 else:
-                    dashboard.set_status(f"DiT tamamlandı ({sec:.1f}s) · Latent kaydediliyor...")
+                    dashboard.set_status(f"HighNoise uzmanı bitti ({sec:.1f}s) · LowNoise yükleniyor...")
                 continue
 
             m_lsave = RE_LATENT_SAVE.search(line)
@@ -961,7 +1003,7 @@ def run_process_monitored(
 
             m_tsize = RE_VAE_TILE_SIZE.search(line)
             if m_tsize:
-                dashboard.set_status(f"Wan 2.1 VAE karo boyutu: {m_tsize.group(1)} px")
+                dashboard.set_status(f"{dashboard.config.vae_label} karo boyutu: {m_tsize.group(1)} px")
                 continue
 
             m_ttot = RE_VAE_TILES_TOTAL.search(line)
@@ -969,7 +1011,7 @@ def run_process_monitored(
                 vae_tiles_total = max(1, int(m_ttot.group(1)))
                 vae_t0 = time.monotonic()
                 dashboard.start_stage("vae", detail=f"0/{vae_tiles_total} karo", determinate=True)
-                dashboard.set_status(f"Wan 2.1 VAE uzamsal+zamansal decode: {vae_tiles_total} karo")
+                dashboard.set_status(f"{dashboard.config.vae_label} uzamsal+zamansal decode: {vae_tiles_total} karo")
                 continue
 
             m_tmp = RE_VAE_TEMP_TILE.search(line)
@@ -994,14 +1036,14 @@ def run_process_monitored(
                 pct = (cur_i / tot_i) * 100.0
                 det = f"Karo {cur_i}/{tot_i} ({rate_val:.2f} {rate_unit})"
                 dashboard.update_stage("vae", pct=pct, detail=det, eta_sec=eta_s)
-                dashboard.set_status(f"Wan 2.1 VAE: {det}")
+                dashboard.set_status(f"{dashboard.config.vae_label}: {det}")
                 continue
 
             m_vdone = RE_VAE_DONE.search(line)
             if m_vdone:
                 sec = float(m_vdone.group(1))
-                dashboard.finish_stage("vae", detail=f"Wan 2.1 VAE ({sec:.1f}s)", elapsed_override=sec)
-                dashboard.set_status(f"Wan 2.1 VAE decode tamamlandı ({sec:.1f}s)")
+                dashboard.finish_stage("vae", detail=f"{dashboard.config.vae_label} ({sec:.1f}s)", elapsed_override=sec)
+                dashboard.set_status(f"{dashboard.config.vae_label} decode tamamlandı ({sec:.1f}s)")
                 continue
 
     rc = proc.wait()
@@ -1015,25 +1057,51 @@ def run_process_monitored(
                 dashboard.finish_stage("vae", detail="TAEHV tamamlandı")
         else:
             if dashboard.stages["vae"].status != "done":
-                dashboard.finish_stage("vae", detail="Wan 2.1 VAE tamamlandı")
+                dashboard.finish_stage("vae", detail=f"{dashboard.config.vae_label} tamamlandı")
     return rc
+
+
+MOTION_PRESETS: dict[str, tuple[str, str]] = {
+    "1": ("Özel / Mevcut Prompt", ""),
+    "2": ("Dinamik Aksiyon Takibi", "dynamic cinematic tracking shot, intense dramatic motion, realistic exhaust and particles, 35mm film"),
+    "3": ("Yavaş Sinematik Zoom", "slow smooth cinematic camera push-in, gentle natural atmospheric movement, rich lighting"),
+    "4": ("Drone Hava Çekimi", "smooth aerial drone gliding forward, natural water and wind movement, sweeping cinematic vista"),
+    "5": ("Doğal Sabit Kamera", "steady tripod shot, subtle lifelike subject and environment motion, natural lighting"),
+}
 
 
 def run_interactive_wizard(
     hw: dict[str, Any],
     select_profile_fn: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
-    """Interactive TUI wizard when user runs without --prompt or via localvid.cmd."""
+    """Interactive 3-mode TUI wizard (T2V / I2V / Studio Mode + Cinema HD) when run without --prompt."""
     configure_console_utf8()
     use_rich = HAS_RICH and is_interactive_tty()
     console = make_console() if use_rich else None
 
-    frame_presets = [
-        ("1", 17, "1.1 sn", "~4.5 dk"),
-        ("2", 33, "2.1 sn", "~8.7 dk"),
-        ("3", 49, "3.1 sn", "~15 dk"),
-        ("4", 81, "5.1 sn", "~52 dk"),
+    frame_presets_14b = [
+        ("1", 17, 1, 16, "1.1 sn", "~4.0 dk"),
+        ("2", 33, 1, 16, "2.1 sn", "~8.5 dk"),
+        ("3", 49, 1, 16, "3.1 sn", "~14 dk"),
+        ("4", 33, 2, 16, "4.1 sn (2×33f Zincir)", "~17 dk"),
+        ("5", 33, 3, 16, "6.2 sn (3×33f Zincir)", "~25 dk"),
     ]
+    frame_presets_5b = [
+        ("1", 49, 1, 16, "3.1 sn @16->32fps", "~3.0 dk (TAEW: ~1.1 dk)"),
+        ("2", 81, 1, 16, "5.1 sn @16->32fps ★", "~4.8 dk (TAEW: ~1.6 dk)"),
+        ("3", 81, 2, 16, "10.1 sn (2×81f Zincir)", "~9.6 dk (TAEW: ~3.2 dk)"),
+        ("4", 81, 3, 16, "15.1 sn (3×81f Zincir)", "~14.4 dk (TAEW: ~4.8 dk)"),
+        ("5", 121, 1, 24, "5.0 sn @24fps native", "~7.5 dk (TAEW: ~2.4 dk)"),
+    ]
+
+    engine = "5b"
+    mode = "studio"
+    init_img: pathlib.Path | None = None
+    motion_prompt: str | None = None
+    fast_preview = False
+    cinema_hd = True
+    fps = 16
+    segments = 1
 
     if use_rich and console is not None:
         live_free_txt = (
@@ -1046,7 +1114,7 @@ def run_interactive_wizard(
                 Align.center(Text(BANNER_ART.strip("\n"), style="bold cyan")),
                 Align.center(
                     Text(
-                        "v0.1.0  ·  Wan 2.2 14B on 4-6 GB VRAM GPUs (CUDA + Vulkan)",
+                        "v0.3.0  ·  Wan 2.2 TI2V-5B (Hızlı 5sn) + 14B T2V/I2V + Z-Image-Turbo + Sinema HD",
                         style="bold white",
                     )
                 ),
@@ -1066,45 +1134,112 @@ def run_interactive_wizard(
         console.print(banner)
         console.print()
 
-        console.print("[bold cyan]1) Video Prompt'u[/bold cyan] [dim](İngilizce detaylı sahne tanımı önerilir; boş bırakırsanız örnek prompt kullanılır)[/dim]")
-        prompt_text = Prompt.ask("   Prompt", default="", show_default=False, console=console).strip()
-        if not prompt_text:
-            prompt_text = DEFAULT_SAMPLE_PROMPT
-            console.print(f"   [dim]Varsayılan örnek seçildi: {prompt_text[:78]}...[/dim]")
+        console.print("[bold cyan]0a) Video Motoru[/bold cyan]")
+        console.print("   [bold cyan][1][/bold cyan] Wan 2.2 TI2V-5B Turbo [green](★ Önerilen · 5 saniyelik 24fps klipler, ~3-6 dk)[/green]")
+        console.print("   [bold cyan][2][/bold cyan] Wan 2.2 14B [dim](Ultra detay · 1-3 sn klipler)[/dim]")
+        eng_choice = Prompt.ask("   Seçiminiz", choices=["1", "2"], default="1", console=console)
+        engine = "5b" if eng_choice == "1" else "14b"
+        fps = 24 if engine == "5b" else 16
+        frame_presets = frame_presets_5b if engine == "5b" else frame_presets_14b
 
         console.print()
-        console.print("[bold cyan]2) Süre / Kare Sayısı[/bold cyan]")
-        p_tbl = Table(box=box.SIMPLE, show_header=True, padding=(0, 1))
-        p_tbl.add_column("Seçim", style="bold cyan", width=6)
-        p_tbl.add_column("Kare / Süre", style="white", width=16)
-        p_tbl.add_column("Profil", style="green", width=22)
-        p_tbl.add_column("Tahmini Süre (RX 5600 XT, 4 adım)", style="yellow")
-        for key, fcnt, dur, eta_est in frame_presets:
-            prof_name = select_profile_fn(hw, fcnt, False)["profile_name"]
-            default_mark = " (Varsayılan)" if key == "2" else ""
-            p_tbl.add_row(f"[{key}]", f"{fcnt}f / {dur}{default_mark}", prof_name, eta_est)
-        console.print(p_tbl)
-        frame_choice = Prompt.ask("   Seçiminiz", choices=["1", "2", "3", "4"], default="2", console=console)
-        frames = dict((k, f) for k, f, _, _ in frame_presets)[frame_choice]
+        console.print("[bold cyan]0b) Çalışma Modu[/bold cyan]")
+        eng_tag = "Wan 2.2 TI2V-5B" if engine == "5b" else "Wan 2.2 14B"
+        console.print(f"   [bold cyan][1][/bold cyan] Text -> Video (T2V) [dim]· Metinden doğrudan {eng_tag} video[/dim]")
+        console.print(f"   [bold cyan][2][/bold cyan] Image -> Video (I2V) [dim]· Mevcut görseli {eng_tag} ile canlandır[/dim]")
+        console.print(f"   [bold cyan][3][/bold cyan] Stüdyo Modu (Text -> Image -> Video) [green]· Z-Image-Turbo ilk kare -> Onay -> {eng_tag}[/green]")
+        mode_choice = Prompt.ask("   Seçiminiz", choices=["1", "2", "3"], default="3", console=console)
+        mode = {"1": "t2v", "2": "i2v", "3": "studio"}[mode_choice]
+
+        if mode == "i2v":
+            console.print()
+            while True:
+                img_raw = Prompt.ask(
+                    "[bold cyan]1) Giriş Görseli (--init-img)[/bold cyan] [dim](dosya yolunu yapıştırın veya sürükleyip bırakın)[/dim]",
+                    console=console,
+                ).strip().strip('"').strip("'")
+                cand = pathlib.Path(img_raw)
+                if cand.exists() and cand.is_file():
+                    init_img = cand
+                    break
+                console.print(f"   [bold red]Dosya bulunamadı:[/bold red] {cand}")
+
+            console.print()
+            console.print("[bold cyan]2) Hareket / Sahne Prompt'u[/bold cyan] [dim](İngilizce önerilir; boş bırakılırsa kamera preset'i kullanılır)[/dim]")
+            prompt_text = Prompt.ask("   Prompt", default="", show_default=False, console=console).strip()
+            console.print("   [dim]Kamera Preset: [1] Özel  [2] Dinamik Aksiyon  [3] Yavaş Zoom  [4] Drone Pan  [5] Doğal Sabit[/dim]")
+            mp_c = Prompt.ask("   Hareket stili", choices=["1", "2", "3", "4", "5"], default="3" if not prompt_text else "1", console=console)
+            preset_suffix = MOTION_PRESETS[mp_c][1]
+            if prompt_text and preset_suffix:
+                prompt_text = f"{prompt_text}, {preset_suffix}"
+            elif not prompt_text:
+                prompt_text = preset_suffix or MOTION_PRESETS["3"][1]
+        else:
+            console.print()
+            label_p = "İlk Kare + Sahne Prompt'u" if mode == "studio" else "Video Prompt'u"
+            console.print(f"[bold cyan]1) {label_p}[/bold cyan] [dim](İngilizce detaylı sahne tanımı önerilir; boş bırakırsanız örnek prompt kullanılır)[/dim]")
+            prompt_text = Prompt.ask("   Prompt", default="", show_default=False, console=console).strip()
+            if not prompt_text:
+                prompt_text = DEFAULT_SAMPLE_PROMPT
+                console.print(f"   [dim]Varsayılan örnek seçildi: {prompt_text[:78]}...[/dim]")
 
         console.print()
-        console.print("[bold cyan]3) Çözünürlük[/bold cyan]")
-        console.print("   [bold cyan][1][/bold cyan] 640x384 [dim](Varsayılan · Hızlı ve dengeli)[/dim]")
-        console.print("   [bold cyan][2][/bold cyan] 832x480 [green](480p Keskin · Wan 2.2 doğal çözünürlüğü)[/green]")
+        console.print("[bold cyan]Çözünürlük (Difüzyon)[/bold cyan]")
+        console.print("   [bold cyan][1][/bold cyan] 640x384 [green](Varsayılan · En hızlı; Sinema HD ile 1280x768 HD olur!)[/green]")
+        console.print("   [bold cyan][2][/bold cyan] 832x480 [dim](Doğal 480p · ~2.5x daha uzun sürer)[/dim]")
         console.print("   [bold cyan][3][/bold cyan] 480x320 [dim](Ultra hızlı · ~1.5x daha kısa süre)[/dim]")
         res_choice = Prompt.ask("   Seçiminiz", choices=["1", "2", "3"], default="1", console=console)
         width, height = {"1": (640, 384), "2": (832, 480), "3": (480, 320)}[res_choice]
 
         console.print()
-        console.print("[bold cyan]4) Kalite / VAE Modu[/bold cyan]")
-        console.print("   [bold cyan][1][/bold cyan] Wan 2.1 VAE [green](Tam Kalite · Ayrı Süreç)[/green]")
-        console.print("   [bold cyan][2][/bold cyan] TAEHV [yellow](Hızlı Önizleme · ~4 sn decode)[/yellow]")
-        vae_choice = Prompt.ask("   Seçiminiz", choices=["1", "2"], default="1", console=console)
-        fast_preview = vae_choice == "2"
+        console.print("[bold cyan]Süre / Kare Sayısı[/bold cyan]")
+        p_tbl = Table(box=box.SIMPLE, show_header=True, padding=(0, 1))
+        p_tbl.add_column("Seçim", style="bold cyan", width=6)
+        p_tbl.add_column("Kare / Süre", style="white", width=18)
+        p_tbl.add_column("Profil", style="green", width=22)
+        p_tbl.add_column("Tahmini Süre (RX 5600 XT, 4 adım)", style="yellow")
+        for key, fcnt, seg_n, f_fps, dur, eta_est in frame_presets:
+            prof_name = select_profile_fn(hw, fcnt, False, width, height, engine=engine)["profile_name"]
+            if engine == "5b":
+                default_mark = " (Varsayılan)" if key == "2" else ""
+            else:
+                default_mark = " (Varsayılan)" if key == "1" and mode != "t2v" else (" (Varsayılan)" if key == "2" and mode == "t2v" else "")
+            lbl_f = f"{seg_n}×{fcnt}f / {dur}{default_mark}" if seg_n > 1 else f"{fcnt}f / {dur}{default_mark}"
+            p_tbl.add_row(f"[{key}]", lbl_f, prof_name, eta_est)
+        console.print(p_tbl)
+        default_fc = "2" if (engine == "5b" or mode == "t2v") else "1"
+        frame_choice = Prompt.ask("   Seçiminiz", choices=["1", "2", "3", "4", "5"], default=default_fc, console=console)
+        _, frames, segments, fps, _, _ = dict((row[0], row) for row in frame_presets)[frame_choice]
+
+        if mode == "t2v" or engine == "5b":
+            console.print()
+            console.print("[bold cyan]Kalite / VAE Modu[/bold cyan]")
+            if engine == "5b":
+                console.print("   [bold cyan][1][/bold cyan] Wan 2.2 VAE [green](Tam Kalite · 48-ch 16×16 · ~4.5-5.5 dk decode)[/green]")
+                console.print("   [bold cyan][2][/bold cyan] TAEW 2.2 [yellow](Ultra Hızlı Önizleme · ~2 sn decode · toplam ~2.4 dk!)[/yellow]")
+            else:
+                console.print("   [bold cyan][1][/bold cyan] Wan 2.1 VAE [green](Tam Kalite · Ayrı Süreç)[/green]")
+                console.print("   [bold cyan][2][/bold cyan] TAEHV [yellow](Hızlı Önizleme · ~4 sn decode)[/yellow]")
+            vae_choice = Prompt.ask("   Seçiminiz", choices=["1", "2"], default="1", console=console)
+            fast_preview = vae_choice == "2"
+
+        if not fast_preview:
+            console.print()
+            hd_fps_lbl = "24fps" if engine == "5b" else "32fps"
+            console.print(f"[bold cyan]Sinema HD ({width*2}x{height*2} @ {hd_fps_lbl}) İyileştirme[/bold cyan]")
+            if engine == "5b":
+                console.print(f"   [bold cyan][1][/bold cyan] Sinema HD 24p [green](★ Önerilen · 2× AI Upscale -> {width*2}x{height*2} @ 24fps, H.264 CRF 15)[/green]")
+            else:
+                console.print(f"   [bold cyan][1][/bold cyan] Sinema HD + 32fps [green](★ Önerilen · 2× AI Upscale -> {width*2}x{height*2} + 2× Optik Akış 32fps)[/green]")
+            console.print(f"   [bold cyan][2][/bold cyan] Standart H.264 [dim]({width}x{height} @ {fps}fps, ek işlem yok)[/dim]")
+            hd_choice = Prompt.ask("   Seçiminiz", choices=["1", "2"], default="1", console=console)
+            cinema_hd = hd_choice == "1"
+        else:
+            cinema_hd = False
 
         console.print()
         seed_raw = Prompt.ask(
-            "[bold cyan]5) Seed[/bold cyan] [dim](boş bırakılırsa rastgele)[/dim]",
+            "[bold cyan]Seed[/bold cyan] [dim](boş bırakılırsa rastgele)[/dim]",
             default="",
             show_default=False,
             console=console,
@@ -1112,22 +1247,38 @@ def run_interactive_wizard(
         seed = int(seed_raw) if seed_raw.isdigit() else random.randint(1, 2_147_483_647)
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_out = f"outputs/localvid_{ts}_{width}x{height}_{frames}f.mp4"
+        tag_hd = "_HD" if cinema_hd else ""
+        default_out = f"outputs/picovid_{engine}_{mode}_{ts}_{width}x{height}_{frames}f{tag_hd}.mp4"
         out_raw = Prompt.ask(
-            "[bold cyan]6) Çıktı MP4 Yolu[/bold cyan]",
+            "[bold cyan]Çıktı MP4 Yolu[/bold cyan]",
             default=default_out,
             console=console,
         ).strip()
         output_path = pathlib.Path(out_raw or default_out)
 
-        selected_prof = select_profile_fn(hw, frames, fast_preview, width, height)
+        selected_prof = select_profile_fn(hw, frames, fast_preview, width, height, engine=engine)
+        eng_name = "Wan 2.2 TI2V-5B Turbo" if engine == "5b" else "Wan 2.2 14B"
+        mode_labels = {
+            "t2v": f"Text -> Video ({eng_name})",
+            "i2v": f"Image -> Video ({eng_name})",
+            "studio": f"Stüdyo Modu (Z-Image-Turbo -> {eng_name})",
+        }
         confirm_tbl = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
         confirm_tbl.add_column(style="bold cyan", width=18)
         confirm_tbl.add_column(style="white")
+        confirm_tbl.add_row("Mod", mode_labels[mode])
+        if init_img is not None:
+            confirm_tbl.add_row("Giriş Görseli", str(init_img))
         confirm_tbl.add_row("Prompt", prompt_text if len(prompt_text) <= 90 else prompt_text[:87] + "...")
-        confirm_tbl.add_row("Hedef", f"{width}x{height} · {frames} kare ({frames / 16.0:.1f}s) · 4 adım")
+        tot_raw_f = segments * frames - (segments - 1)
+        out_fps_s = fps * 2 if (cinema_hd and fps < 24) else fps
+        out_res_s = f"{width*2}x{height*2}" if (cinema_hd and width <= 640) else f"{width}x{height}"
+        final_res_s = f"{out_res_s} @ {out_fps_s}fps (Sinema HD)" if cinema_hd else f"{width}x{height} @ {fps}fps"
+        seg_txt = f" ({segments}×{frames}f zincir)" if segments > 1 else f" · {frames}f"
+        confirm_tbl.add_row("Hedef", f"DiT {width}x{height}{seg_txt} ({tot_raw_f/fps:.1f}s) -> Çıktı: {final_res_s}")
         confirm_tbl.add_row("Profil / VRAM", f"{selected_prof['profile_name']} (--max-vram {selected_prof['max_vram_gib']} GiB)")
-        confirm_tbl.add_row("VAE Modu", "TAEHV (Hızlı Önizleme)" if fast_preview else "Wan 2.1 VAE (Tam Kalite)")
+        vae_lbl = "Wan 2.2 VAE (48-ch, 16×16)" if engine == "5b" else ("TAEHV (Hızlı Önizleme)" if fast_preview else "Wan 2.1 VAE (Tam Kalite · H.264 CRF 15)")
+        confirm_tbl.add_row("VAE Modu", vae_lbl)
         confirm_tbl.add_row("Seed / Çıktı", f"{seed}  ->  {output_path}")
         if selected_prof.get("vram_warning"):
             confirm_tbl.add_row("VRAM Uyarısı", f"[bold yellow]{selected_prof['vram_warning']}[/bold yellow]")
@@ -1137,34 +1288,131 @@ def run_interactive_wizard(
         if not Confirm.ask("Üretimi başlat?", default=True, console=console):
             raise KeyboardInterrupt("Kullanıcı tarafından iptal edildi.")
     else:
-        print("=== localVid v0.1.0 İnteraktif Sihirbaz ===")
+        print("=== PicoVid v0.3.0 İnteraktif Sihirbaz ===")
         print(f"GPU: {hw['gpu_name']} ({hw['backend'].upper()}, {hw['vram_class']})")
-        prompt_text = input("1) Prompt (İngilizce önerilir, boş = örnek): ").strip() or DEFAULT_SAMPLE_PROMPT
-        print("2) Süre/Kare: [1] 17f (1.1s)  [2] 33f (2.1s, varsayılan)  [3] 49f (3.1s)  [4] 81f (5.1s)")
-        fc = input("   Seçim [2]: ").strip() or "2"
-        frames = {"1": 17, "2": 33, "3": 49, "4": 81}.get(fc, 33)
-        rc = input("3) Çözünürlük: [1] 640x384 (varsayılan)  [2] 832x480 (480p keskin)  [3] 480x320 (hızlı) [1]: ").strip() or "1"
+        print("0a) Motor: [1] Wan 2.2 TI2V-5B Turbo (5sn hızlı)  [2] Wan 2.2 14B (Ultra detay)")
+        ec = input("   Seçim [1]: ").strip() or "1"
+        engine = "5b" if ec == "1" else "14b"
+        fps = 24 if engine == "5b" else 16
+        print("0b) Mod: [1] Text->Video (T2V)  [2] Image->Video (I2V)  [3] Stüdyo Modu (T2I->I2V)")
+        mc = input("   Seçim [3]: ").strip() or "3"
+        mode = {"1": "t2v", "2": "i2v", "3": "studio"}.get(mc, "studio")
+        if mode == "i2v":
+            img_raw = input("1) Giriş görseli yolu: ").strip().strip('"').strip("'")
+            init_img = pathlib.Path(img_raw)
+        prompt_text = input("Prompt (İngilizce önerilir, boş = örnek): ").strip() or DEFAULT_SAMPLE_PROMPT
+        rc = input("Çözünürlük: [1] 640x384 (varsayılan)  [2] 832x480 (480p)  [3] 480x320 (hızlı) [1]: ").strip() or "1"
         width, height = {"1": (640, 384), "2": (832, 480), "3": (480, 320)}.get(rc, (640, 384))
-        vc = input("4) Kalite: [1] Wan 2.1 VAE (Tam Kalite)  [2] TAEHV (Hızlı) [1]: ").strip() or "1"
-        fast_preview = vc == "2"
-        sr = input("5) Seed (boş = rastgele): ").strip()
+        if engine == "5b":
+            print("Süre/Kare (@24fps): [1] 49f (2.0s)  [2] 73f (3.0s)  [3] 97f (4.0s)  [4] 121f (5.0s)")
+            fc = input("   Seçim [4]: ").strip() or "4"
+            frames = {"1": 49, "2": 73, "3": 97, "4": 121}.get(fc, 121)
+        else:
+            print("Süre/Kare (@16fps): [1] 17f (1.1s)  [2] 33f (2.1s)  [3] 49f (3.1s)  [4] 81f (5.1s)")
+            fc = input(f"   Seçim [{'2' if mode == 't2v' else '1'}]: ").strip() or ("2" if mode == "t2v" else "1")
+            frames = {"1": 17, "2": 33, "3": 49, "4": 81}.get(fc, 17)
+        if mode == "t2v" and engine == "14b":
+            vc = input("Kalite: [1] Wan 2.1 VAE (Tam Kalite)  [2] TAEHV (Hızlı) [1]: ").strip() or "1"
+            fast_preview = vc == "2"
+        if not fast_preview:
+            hc = input("Sinema HD (2x AI Upscale)? [1] Evet (Önerilen)  [2] Hayır [1]: ").strip() or "1"
+            cinema_hd = hc == "1"
+        else:
+            cinema_hd = False
+        sr = input("Seed (boş = rastgele): ").strip()
         seed = int(sr) if sr.isdigit() else random.randint(1, 2_147_483_647)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_out = f"outputs/localvid_{ts}_{width}x{height}_{frames}f.mp4"
-        output_path = pathlib.Path(input(f"6) Çıktı MP4 [{default_out}]: ").strip() or default_out)
-        selected_prof = select_profile_fn(hw, frames, fast_preview, width, height)
+        tag_hd = "_HD" if cinema_hd else ""
+        default_out = f"outputs/picovid_{engine}_{mode}_{ts}_{width}x{height}_{frames}f{tag_hd}.mp4"
+        output_path = pathlib.Path(input(f"Çıktı MP4 [{default_out}]: ").strip() or default_out)
+        selected_prof = select_profile_fn(hw, frames, fast_preview, width, height, engine=engine)
         if selected_prof.get("vram_warning"):
-            print(f"[localVid] {selected_prof['vram_warning']}")
+            print(f"[PicoVid] {selected_prof['vram_warning']}")
 
     return {
+        "engine": engine,
+        "mode": mode,
+        "init_img": init_img,
         "prompt": prompt_text,
+        "motion_prompt": motion_prompt,
         "frames": frames,
+        "fps": fps,
+        "segments": segments,
         "width": width,
         "height": height,
         "fast_preview": fast_preview,
+        "cinema_hd": cinema_hd,
         "seed": seed,
         "output": output_path,
     }
+
+
+def ask_studio_frame_decision(
+    image_path: pathlib.Path,
+    prompt_text: str,
+    seed: int,
+    elapsed_sec: float,
+    use_rich: bool,
+) -> tuple[str, str | None]:
+    """Open generated first frame in Windows and let user approve, regenerate, edit prompt, or cancel.
+
+    Returns (action, extra_text):
+      - ("proceed", motion_prompt_or_None)
+      - ("reroll", None)
+      - ("prompt", new_prompt)
+      - ("cancel", None)
+    """
+    if image_path.exists() and platform.system() == "Windows":
+        try:
+            os.startfile(str(image_path))  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    if use_rich and HAS_RICH:
+        console = make_console()
+        tbl = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
+        tbl.add_column(style="bold cyan", width=18)
+        tbl.add_column(style="white")
+        tbl.add_row("İlk Kare (T2I)", f"[bold green]{image_path}[/bold green] ({format_file_size(image_path)})")
+        tbl.add_row("Süre / Seed", f"{elapsed_sec:.1f} sn  ·  seed={seed}")
+        tbl.add_row("Prompt", prompt_text if len(prompt_text) <= 95 else prompt_text[:92] + "...")
+        console.print()
+        console.print(Panel(tbl, title="[bold cyan]Stüdyo Modu · İlk Kare Onayı[/bold cyan]", border_style="cyan", box=box.ROUNDED))
+        console.print("  [bold green][E][/bold green] Videoya Çevir (Wan 2.2 I2V)   [bold yellow][Y][/bold yellow] Yeni Seed ile Yenile   [bold cyan][P][/bold cyan] Prompt Değiştir   [dim][I] İptal[/dim]")
+        ans = Prompt.ask("  Seçiminiz", default="E", console=console).strip().lower()
+        if ans in ("", "e", "evet", "y_ok", "ok"):
+            console.print("  [dim]Hareket Stili: [1] Mevcut Prompt  [2] Dinamik Aksiyon  [3] Yavaş Zoom  [4] Drone Pan  [5] Doğal Sabit[/dim]")
+            mp_c = Prompt.ask("  Hareket preset'i", choices=["1", "2", "3", "4", "5"], default="1", console=console)
+            mp = Prompt.ask(
+                "  Ek hareket prompt'u [dim](boş bırakılabilir)[/dim]",
+                default="",
+                show_default=False,
+                console=console,
+            ).strip()
+            preset_s = MOTION_PRESETS[mp_c][1]
+            if mp and preset_s:
+                return "proceed", f"{mp}, {preset_s}"
+            if preset_s:
+                return "proceed", f"{prompt_text}, {preset_s}"
+            return "proceed", (mp or None)
+        if ans in ("y", "yenile", "r", "reroll"):
+            return "reroll", None
+        if ans in ("p", "prompt"):
+            new_p = Prompt.ask("  Yeni Prompt", default=prompt_text, console=console).strip()
+            return "prompt", (new_p or prompt_text)
+        return "cancel", None
+
+    print(f"\n[Stüdyo] İlk kare hazır ({elapsed_sec:.1f}s, seed={seed}): {image_path}")
+    ans = input("[E] Videoya Çevir / [Y] Yeni Seed / [P] Prompt Değiştir / [I] İptal [E]: ").strip().lower()
+    if ans in ("", "e", "evet"):
+        mp = input("Hareket prompt'u (boş = aynı prompt): ").strip()
+        return "proceed", (mp or None)
+    if ans in ("y", "r"):
+        return "reroll", None
+    if ans == "p":
+        new_p = input("Yeni Prompt: ").strip()
+        return "prompt", (new_p or prompt_text)
+    return "cancel", None
 
 
 def ask_open_video(output_path: pathlib.Path, use_rich: bool) -> None:
