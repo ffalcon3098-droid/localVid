@@ -1,0 +1,101 @@
+{
+  "timestamp_utc": "2026-11-24T11:08:58.706448+00:00",
+  "system": {
+    "os": "Windows",
+    "os_release": "11",
+    "os_version": "10.0.26200",
+    "arch": "AMD64",
+    "cpu_threads": 12,
+    "ram_total_bytes": 34247147520,
+    "ram_total_gib": 31.9
+  },
+  "cuda": {
+    "available": false,
+    "gpus": []
+  },
+  "vulkan": {
+    "available": true,
+    "devices": [
+      {
+        "gpu_index": 0,
+        "name": "AMD Radeon RX 5600 XT",
+        "device_type": "PHYSICAL_DEVICE_TYPE_DISCRETE_GPU",
+        "vendor_id": "0x1002",
+        "device_id": "0x731f",
+        "api_version": "1.4.315",
+        "driver_name": "AMD proprietary driver",
+        "driver_info": "26.11.2 (AMD proprietary shader compiler)",
+        "max_memory_allocation_bytes": 2147483648,
+        "max_memory_allocation_gib": 2.0,
+        "max_storage_buffer_range_bytes": 4294967295,
+        "extensions": {
+          "VK_EXT_memory_budget": true,
+          "VK_KHR_cooperative_matrix": true
+        },
+        "features": {
+          "shaderFloat16": true,
+          "shaderInt8": true,
+          "storageBuffer16BitAccess": true
+        },
+        "memory_heaps": [
+          {
+            "index": 0,
+            "size_bytes": 5351931904,
+            "size_gib": 4.984,
+            "budget_bytes": 4659796480,
+            "budget_gib": 4.34,
+            "usage_bytes": 589824,
+            "usage_mib": 0.56,
+            "flags": [
+              "MEMORY_HEAP_DEVICE_LOCAL_BIT",
+              "MEMORY_HEAP_MULTI_INSTANCE_BIT"
+            ],
+            "device_local": true
+          },
+          {
+            "index": 1,
+            "size_bytes": 17123573760,
+            "size_gib": 15.948,
+            "budget_bytes": 16318267392,
+            "budget_gib": 15.198,
+            "usage_bytes": 331776,
+            "usage_mib": 0.32,
+            "flags": [],
+            "device_local": false
+          },
+          {
+            "index": 2,
+            "size_bytes": 1073741824,
+            "size_gib": 1.0,
+            "budget_bytes": 934880832,
+            "budget_gib": 0.871,
+            "usage_bytes": 0,
+            "usage_mib": 0.0,
+            "flags": [
+              "MEMORY_HEAP_DEVICE_LOCAL_BIT",
+              "MEMORY_HEAP_MULTI_INSTANCE_BIT"
+            ],
+            "device_local": true
+          }
+        ],
+        "device_local_total_gib": 5.984,
+        "device_local_budget_gib": 5.21,
+        "primary_device_local_budget_gib": 4.34
+      }
+    ]
+  },
+  "sd_cli": {
+    "available": true,
+    "path": "bin\\sdcpp-vulkan\\sd-cli.exe",
+    "ggml_vulkan_summary": "ggml_vulkan: 0 = AMD Radeon RX 5600 XT (AMD proprietary driver) | uma: 0 | rebar: 0 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 32768 | int dot: 0 | matrix cores: none",
+    "listed_devices": [
+      "Vulkan0\tAMD Radeon RX 5600 XT",
+      "CPU\tAMD Ryzen 5 5500"
+    ],
+    "raw_output": "Vulkan0\tAMD Radeon RX 5600 XT\nCPU\tAMD Ryzen 5 5500                               \n\nggml_vulkan: Found 1 Vulkan devices:\nggml_vulkan: 0 = AMD Radeon RX 5600 XT (AMD proprietary driver) | uma: 0 | rebar: 0 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 32768 | int dot: 0 | matrix cores: none\nload_backend: loaded Vulkan backend from C:\\Users\\ROBONENTA\\Desktop\\Projects\\localVid\\bin\\sdcpp-vulkan\\ggml-vulkan.dll\nload_backend: loaded CPU backend from C:\\Users\\ROBONENTA\\Desktop\\Projects\\localVid\\bin\\sdcpp-vulkan\\ggml-cpu-haswell.dll"
+  },
+  "recommendations": [
+    "Vulkan GPU 'AMD Radeon RX 5600 XT' has maxMemoryAllocationSize=2.0 GiB. Any single tensor/compute/im2col buffer > 2.0 GiB will fail with VK_ERROR_OUT_OF_DEVICE_MEMORY.",
+    "Primary DEVICE_LOCAL heap budget is 4.34 GiB (discrete GPU). Use --max-vram <= 3.99 GiB to avoid sd.cpp model_manager.cpp:2477 Vulkan budget underflow (available_device_bytes=0)."
+  ]
+}

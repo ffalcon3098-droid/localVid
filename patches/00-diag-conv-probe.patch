@@ -1,0 +1,52 @@
+diff --git a/src/core/probe/backend_probe.cpp b/src/core/probe/backend_probe.cpp
+index c35f586..69275b1 100644
+--- a/src/core/probe/backend_probe.cpp
++++ b/src/core/probe/backend_probe.cpp
+@@ -3,6 +3,7 @@
+ #include <algorithm>
+ #include <chrono>
+ #include <cmath>
++#include <cstdlib>
+ #include <exception>
+ 
+ #include "core/ggml_extend_backend.h"
+@@ -107,12 +108,36 @@ static bool backend_probe_outputs_match(const BackendProbeGraph& reference,
+     std::vector<float> expected(count), actual(count);
+     ggml_backend_tensor_get(reference.output, expected.data(), 0, count * sizeof(float));
+     ggml_backend_tensor_get(candidate.output, actual.data(), 0, count * sizeof(float));
++    size_t nan_count      = 0;
++    size_t mismatch_count = 0;
++    float max_abs_diff    = 0.f;
++    float max_rel_diff    = 0.f;
++    float worst_exp = 0.f, worst_act = 0.f;
+     for (size_t i = 0; i < count; ++i) {
+-        if (!std::isfinite(expected[i]) || !std::isfinite(actual[i]) ||
+-            std::abs(expected[i] - actual[i]) > options.absolute_tolerance + options.relative_tolerance * std::abs(expected[i])) {
+-            return false;
++        if (!std::isfinite(expected[i]) || !std::isfinite(actual[i])) {
++            ++nan_count;
++            continue;
++        }
++        const float abs_d = std::abs(expected[i] - actual[i]);
++        const float tol   = options.absolute_tolerance + options.relative_tolerance * std::abs(expected[i]);
++        if (abs_d > max_abs_diff) {
++            max_abs_diff = abs_d;
++            max_rel_diff = abs_d / std::max(1e-8f, std::abs(expected[i]));
++            worst_exp    = expected[i];
++            worst_act    = actual[i];
++        }
++        if (abs_d > tol) {
++            ++mismatch_count;
+         }
+     }
++    if (nan_count > 0 || mismatch_count > 0) {
++        if (const char* diag = std::getenv("SD_PROBE_DIAG"); diag && diag[0] == '1') {
++            LOG_WARN("backend_probe mismatch: count=%zu, mismatches=%zu, non_finite=%zu, max_abs_diff=%.6g, max_rel_diff=%.6g (exp=%.6g vs act=%.6g, tol=%.4g+%.4g*|exp|)",
++                     count, mismatch_count, nan_count, max_abs_diff, max_rel_diff, worst_exp, worst_act,
++                     options.absolute_tolerance, options.relative_tolerance);
++        }
++        return false;
++    }
+     return true;
+ }
+ 

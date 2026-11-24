@@ -1,0 +1,17 @@
+# localVid v0.1.0 Patch Series (Apache-2.0)
+# Base repository: leejet/stable-diffusion.cpp @ 3b12781 (master-1122-3b12781)
+# Base ggml pin:   leejet/ggml                 @ eeda9ec
+#
+# All patches are 100% backend-agnostic (CUDA + Vulkan via ggml_backend_* API)
+# and default OFF unless enabled via their respective environment variables.
+# Apply in order using: powershell -File scripts/apply_patches.ps1
+
+00-diag-conv-probe.patch                  # SD_PROBE_DIAG=1: log max_abs_diff & non_finite on conv_direct probe mismatch
+01-p1-model-loader-sleep.patch            # SD_LOADER_FAST_POLL=1: 200ms -> 5ms loader polling (-8s across 40 Wan blocks)
+02-p1-evict-and-drop-queued.patch         # SD_EVICT_ON_END=1, SD_EVICT_PAST=1, SD_DROP_QUEUED=1: immediate post-segment VRAM eviction
+03-p1-staging-pool-and-capacity-log.patch # SD_STAGING_POOL_MB, SD_VRAM_MARGIN_MB, SD_CAPACITY_LOG: reusable device staging buffer pool
+04-p2-seg-timing.patch                    # SD_SEG_TIMING=1|2: per-segment execution timing profiler (ms)
+05-p2-wan-split-and-chunk.patch           # SD_WAN_SPLIT_BLOCK, SD_WAN_QKV_SPLIT, SD_WAN_ATTN_HEAD_CHUNK/CUT, SD_WAN_ATTN_Q_CHUNK, SD_WAN_MLP_CHUNK_MB
+06-p2-cut-cache-host.patch                # SD_CUT_CACHE_HOST_MB: route large graph-cut boundary tensors to Host RAM (disables VRAM bind_outputs)
+07-p3-conv-direct-tol.patch               # SD_CONV_DIRECT_TOL: configurable FP16 tolerance for Vulkan conv2d/conv3d direct auto-probe
+08-p3-separate-process-vae.patch          # SD_VIDEO_LATENT_SAVE[_ONLY], SD_VIDEO_LATENT_LOAD, SD_VIDEO_LATENT_DIT_TO_VAE=1: bit-exact separate-process VAE

@@ -1,0 +1,84 @@
+{
+  "project": "localVid",
+  "target_model": "Wan 2.2 A14B MoE",
+  "engine": {
+    "repo": "leejet/stable-diffusion.cpp",
+    "stock_release_tag": "master-1122-3b12781",
+    "vulkan_cli": "bin/sdcpp-vulkan/sd-cli.exe"
+  },
+  "download_sets": {
+    "minimal_oom_probe_gb": 12.655,
+    "full_moe_lightx2v_gb": 23.982,
+    "files": [
+      {
+        "id": "wan22_low_noise_q4km",
+        "set": "minimal",
+        "role": "diffusion_model",
+        "filename": "models/diffusion_models/Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+        "size_gb": 8.987,
+        "url": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf"
+      },
+      {
+        "id": "umt5_xxl_q4km",
+        "set": "minimal",
+        "role": "t5xxl",
+        "filename": "models/text_encoders/umt5-xxl-encoder-Q4_K_M.gguf",
+        "size_gb": 3.404,
+        "url": "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"
+      },
+      {
+        "id": "wan21_vae",
+        "set": "minimal",
+        "role": "vae",
+        "filename": "models/vae/wan_2.1_vae.safetensors",
+        "size_gb": 0.242,
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+      },
+      {
+        "id": "taehv_wan21",
+        "set": "minimal",
+        "role": "taesd",
+        "filename": "models/vae/taew2_1.safetensors",
+        "size_gb": 0.022,
+        "url": "https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_1.safetensors"
+      },
+      {
+        "id": "wan22_high_noise_q4km",
+        "set": "full_moe",
+        "role": "high_noise_diffusion_model",
+        "filename": "models/diffusion_models/Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
+        "size_gb": 8.987,
+        "url": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf"
+      },
+      {
+        "id": "lightx2v_4step_low",
+        "set": "full_moe",
+        "role": "lora_low_noise",
+        "filename": "models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        "size_gb": 1.170,
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"
+      },
+      {
+        "id": "lightx2v_4step_high",
+        "set": "full_moe",
+        "role": "lora_high_noise",
+        "filename": "models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "size_gb": 1.170,
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors"
+      }
+    ]
+  },
+  "oom_ladder_defaults": {
+    "resolutions": [
+      { "width": 480, "height": 320, "label": "480x320_smoke" },
+      { "width": 640, "height": 384, "label": "640x384_target" }
+    ],
+    "frame_ladder": [17, 33, 49, 65, 81],
+    "steps": 2,
+    "cfg_scale": 1.0,
+    "fps": 16,
+    "seed": 42,
+    "max_vram_gib": 4.0,
+    "prompt": "A cinematic wide shot of ocean waves crashing onto dark volcanic rocks at golden hour, realistic lighting, smooth camera pan"
+  }
+}

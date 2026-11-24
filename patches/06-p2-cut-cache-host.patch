@@ -1,0 +1,71 @@
+diff --git a/src/core/runner_cache.cpp b/src/core/runner_cache.cpp
+index 9bbcae0..295a181 100644
+--- a/src/core/runner_cache.cpp
++++ b/src/core/runner_cache.cpp
+@@ -1,11 +1,30 @@
+ #include "core/runner_cache.h"
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <iterator>
+ #include <unordered_set>
+ 
+ #include "core/ggml_graph_cut.h"
+ #include "core/util.h"
++#include "ggml-cpu.h"
++
++static size_t cut_cache_host_threshold_bytes() {
++    static const size_t bytes = [] {
++        const char* e = std::getenv("SD_CUT_CACHE_HOST_MB");
++        if (e == nullptr || e[0] == '\0') {
++            return size_t(0);
++        }
++        const long long mb = std::atoll(e);
++        return mb > 0 ? static_cast<size_t>(mb) * 1024ULL * 1024ULL : size_t(0);
++    }();
++    return bytes;
++}
++
++static ggml_backend_t cut_cache_host_backend() {
++    static ggml_backend_t host = ggml_backend_cpu_init();
++    return host;
++}
+ 
+ namespace sd {
+     static std::unordered_set<const ggml_tensor*> cache_graph_tensors(ggml_cgraph* graph) {
+@@ -164,6 +183,10 @@ namespace sd {
+     }
+ 
+     bool GraphCutTensorCache::can_bind_output(ggml_backend_t backend, const ggml_tensor* tensor) {
++        const size_t host_thresh = cut_cache_host_threshold_bytes();
++        if (host_thresh > 0 && tensor != nullptr && ggml_nbytes(tensor) >= host_thresh) {
++            return false;
++        }
+         return tensor != nullptr && tensor->view_src == nullptr && tensor->op != GGML_OP_NONE &&
+                ggml_is_contiguous(tensor) && ggml_backend_supports_op(backend, tensor);
+     }
+@@ -204,6 +227,10 @@ namespace sd {
+                 continue;
+             }
+             ggml_tensor* source      = ggml_graph_cut::cache_source_tensor(output);
++            const size_t host_thresh = cut_cache_host_threshold_bytes();
++            if (host_thresh > 0 && ggml_nbytes(source) >= host_thresh) {
++                continue;
++            }
+             const size_t tensor_size = GGML_PAD(
+                 ggml_backend_buft_get_alloc_size(buffer_type, source), alignment);
+             total_size = tensor_size > SIZE_MAX - total_size ? SIZE_MAX : total_size + tensor_size;
+@@ -233,7 +260,12 @@ namespace sd {
+                 continue;
+             }
+             ggml_status status;
+-            auto entry = CachedTensor::copy(backend_, output->name, ggml_graph_cut::cache_source_tensor(output), status);
++            ggml_tensor* src_tensor  = ggml_graph_cut::cache_source_tensor(output);
++            const size_t host_thresh = cut_cache_host_threshold_bytes();
++            ggml_backend_t dst_be    = (host_thresh > 0 && ggml_nbytes(src_tensor) >= host_thresh && cut_cache_host_backend() != nullptr)
++                                           ? cut_cache_host_backend()
++                                           : backend_;
++            auto entry = CachedTensor::copy(dst_be, output->name, src_tensor, status);
+             if (entry == nullptr) {
+                 LOG_ERROR("%s failed to capture graph cut tensor: %s", log_desc, output->name);
+                 return status;

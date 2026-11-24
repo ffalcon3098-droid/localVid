@@ -1,0 +1,27 @@
+diff --git a/src/core/execution_engine.cpp b/src/core/execution_engine.cpp
+index 9c388ba..ac7ec14 100644
+--- a/src/core/execution_engine.cpp
++++ b/src/core/execution_engine.cpp
+@@ -713,9 +713,22 @@ namespace sd {
+             }
+             LOG_DEBUG("%s executing segment %zu/%zu: %s", task_.description.c_str(),
+                       index + 1, plan.segments.size(), segment.group_name.c_str());
++            static const int seg_timing_mode = [] {
++                const char* e = std::getenv("SD_SEG_TIMING");
++                return (e != nullptr && e[0] != '\0') ? std::atoi(e) : 0;
++            }();
++            const int64_t seg_t0 = seg_timing_mode > 0 ? ggml_time_ms() : 0;
+             if (!execute_segment(segment_graph, n_threads, [&]() { weights.submit_next(); })) {
+                 return fail_segment("execution");
+             }
++            if (seg_timing_mode > 0 && (seg_timing_mode >= 2 || index < 16)) {
++                const int64_t seg_t1 = ggml_time_ms();
++                LOG_INFO("seg_timing: %s seg %zu/%zu (%s): %.1f ms",
++                         task_.description.c_str(),
++                         index + 1, plan.segments.size(),
++                         segment.group_name.c_str(),
++                         static_cast<double>(seg_t1 - seg_t0));
++            }
+             auto cache_status = session_.cache_.capture(segment_graph);
+             if (cache_status == GGML_STATUS_SUCCESS) {
+                 cache_status = session_.cut_cache_.capture(graph, segment, task_.description.c_str());

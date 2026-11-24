@@ -1,0 +1,185 @@
+diff --git a/src/model_manager.cpp b/src/model_manager.cpp
+index b13cd0e..f665476 100644
+--- a/src/model_manager.cpp
++++ b/src/model_manager.cpp
+@@ -818,7 +818,7 @@ bool ModelManager::stage_tensors_to_compute_backend(const std::vector<TensorStat
+             }
+ 
+             ggml_backend_buffer_t compute_buffer =
+-                ggml_backend_alloc_ctx_tensors_from_buft(staging_ctx, staging_buft);
++                alloc_staging_tensors(staging_ctx, staging_buft, compute_backend);
+             if (compute_buffer == nullptr) {
+                 LOG_ERROR("model manager alloc compute params backend buffer failed, num_tensors = %zu",
+                           staged_tensors.size());
+@@ -1718,7 +1718,7 @@ void ModelManager::free_compute_staging_block(ComputeStagingBlock& block) {
+     }
+ 
+     if (block.buffer != nullptr) {
+-        ggml_backend_buffer_free(block.buffer);
++        release_staging_buffer(block.buffer, block.compute_backend);
+         block.buffer = nullptr;
+     }
+     if (block.staging_ctx != nullptr) {
+@@ -1875,6 +1875,7 @@ void ModelManager::release_all() {
+         state->applied_lora_epoch = UINT64_MAX;
+     }
+     release_compute_staging_blocks(true);
++    clear_staging_pool();
+     release_params_storage_blocks(true);
+ }
+ 
+@@ -2431,6 +2432,17 @@ ModelManager::CapacityCheck ModelManager::check_capacity(
+         safety_margin = 1024ULL * 1024ULL * 1024ULL;
+     }
+ #endif
++    if (const char* margin_env = std::getenv("SD_VRAM_MARGIN_MB")) {
++        const long long margin_mb = std::atoll(margin_env);
++        if (margin_mb > 0) {
++            safety_margin = static_cast<size_t>(margin_mb) * 1024ULL * 1024ULL;
++        }
++    }
++    static const bool capacity_log = [] {
++        const char* e = std::getenv("SD_CAPACITY_LOG");
++        return e != nullptr && e[0] == '1';
++    }();
++    log_details = log_details || capacity_log;
+     result.required_device_bytes = add(add(request.pending_allocation_bytes, missing), safety_margin);
+     result.required_budget_bytes = add(request.runtime_peak_bytes(), missing);
+ 
+diff --git a/src/model_manager.h b/src/model_manager.h
+index d92f73b..a7a2d4e 100644
+--- a/src/model_manager.h
++++ b/src/model_manager.h
+@@ -165,6 +165,21 @@ private:
+     void release_all();
+     void invalidate_sources(const std::unordered_set<TensorState*>& states);
+ 
++    struct StagingPoolEntry {
++        ggml_backend_buffer_type_t buft = nullptr;
++        ggml_backend_t compute_backend  = nullptr;
++        size_t size                     = 0;
++        ggml_backend_buffer_t buffer    = nullptr;
++    };
++    std::vector<StagingPoolEntry> staging_pool_;
++    size_t staging_pool_bytes_ = 0;
++
++    ggml_backend_buffer_t alloc_staging_tensors(ggml_context* ctx,
++                                                ggml_backend_buffer_type_t buft,
++                                                ggml_backend_t compute_backend);
++    void release_staging_buffer(ggml_backend_buffer_t buffer, ggml_backend_t compute_backend);
++    void clear_staging_pool();
++
+     ggml_backend_t prefetch_backend_for(ggml_backend_t compute_backend);
+     bool populate_prefetch_block(PrefetchBlock& block);
+     void synchronize_prefetch_block(PrefetchBlock& block);
+diff --git a/src/model_manager_prefetch.cpp b/src/model_manager_prefetch.cpp
+index e1969ee..a2aacc5 100644
+--- a/src/model_manager_prefetch.cpp
++++ b/src/model_manager_prefetch.cpp
+@@ -1,10 +1,88 @@
+ #include "model_manager.h"
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <utility>
+ 
+ #include "core/ggml_extend_backend.h"
+ #include "core/util.h"
++#include "ggml-alloc.h"
++
++static size_t staging_pool_cap_bytes() {
++    static const size_t cap = [] {
++        const char* e = std::getenv("SD_STAGING_POOL_MB");
++        if (e == nullptr || e[0] == '\0') {
++            return size_t(0);
++        }
++        const long long mb = std::atoll(e);
++        return mb > 0 ? static_cast<size_t>(mb) * 1024ULL * 1024ULL : size_t(0);
++    }();
++    return cap;
++}
++
++ggml_backend_buffer_t ModelManager::alloc_staging_tensors(ggml_context* ctx,
++                                                          ggml_backend_buffer_type_t buft,
++                                                          ggml_backend_t compute_backend) {
++    const size_t cap = staging_pool_cap_bytes();
++    if (cap == 0 || ggml_backend_buft_is_host(buft) || compute_backend == nullptr) {
++        return ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
++    }
++    const size_t need = ggml_backend_alloc_ctx_tensors_from_buft_size(ctx, buft);
++    if (need > 0 && need <= cap) {
++        for (auto it = staging_pool_.begin(); it != staging_pool_.end(); ++it) {
++            if (it->buft == buft && it->compute_backend == compute_backend && it->size == need) {
++                ggml_backend_buffer_t buffer = it->buffer;
++                staging_pool_bytes_ -= it->size;
++                staging_pool_.erase(it);
++                ggml_backend_synchronize(compute_backend);
++                ggml_backend_buffer_reset(buffer);
++                ggml_tallocr talloc = ggml_tallocr_new(buffer);
++                bool ok             = true;
++                for (ggml_tensor* t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
++                    if (ggml_tallocr_alloc(&talloc, t) != GGML_STATUS_SUCCESS) {
++                        ok = false;
++                        break;
++                    }
++                }
++                if (ok) {
++                    return buffer;
++                }
++                ggml_backend_buffer_free(buffer);
++                break;
++            }
++        }
++    }
++    return ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
++}
++
++void ModelManager::release_staging_buffer(ggml_backend_buffer_t buffer, ggml_backend_t compute_backend) {
++    if (buffer == nullptr) {
++        return;
++    }
++    const size_t cap  = staging_pool_cap_bytes();
++    const size_t size = ggml_backend_buffer_get_size(buffer);
++    if (cap == 0 || size == 0 || size > cap || ggml_backend_buffer_is_host(buffer) || compute_backend == nullptr) {
++        ggml_backend_buffer_free(buffer);
++        return;
++    }
++    while (!staging_pool_.empty() && staging_pool_bytes_ + size > cap) {
++        ggml_backend_buffer_free(staging_pool_.front().buffer);
++        staging_pool_bytes_ -= staging_pool_.front().size;
++        staging_pool_.erase(staging_pool_.begin());
++    }
++    staging_pool_.push_back({ggml_backend_buffer_get_type(buffer), compute_backend, size, buffer});
++    staging_pool_bytes_ += size;
++}
++
++void ModelManager::clear_staging_pool() {
++    for (auto& entry : staging_pool_) {
++        if (entry.buffer != nullptr) {
++            ggml_backend_buffer_free(entry.buffer);
++        }
++    }
++    staging_pool_.clear();
++    staging_pool_bytes_ = 0;
++}
+ 
+ ggml_backend_t ModelManager::prefetch_backend_for(ggml_backend_t compute_backend) {
+     auto existing = prefetch_backends_.find(compute_backend);
+@@ -47,7 +125,7 @@ void ModelManager::free_prefetch_block(PrefetchBlock& block) {
+         }
+         staging_block->staged_tensors.clear();
+         if (staging_block->buffer != nullptr) {
+-            ggml_backend_buffer_free(staging_block->buffer);
++            release_staging_buffer(staging_block->buffer, staging_block->compute_backend);
+             staging_block->buffer = nullptr;
+         }
+         if (staging_block->staging_ctx != nullptr) {
+@@ -133,7 +211,7 @@ bool ModelManager::populate_prefetch_block(PrefetchBlock& block) {
+             staging_block->staged_tensors.push_back({state, staging_tensor});
+         }
+         staging_block->buffer =
+-            ggml_backend_alloc_ctx_tensors_from_buft(staging_ctx, buffer_type);
++            alloc_staging_tensors(staging_ctx, buffer_type, block.compute_backend);
+         if (staging_block->buffer == nullptr) {
+             ggml_free(staging_ctx);
+             staging_block->staging_ctx = nullptr;

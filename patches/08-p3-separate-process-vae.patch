@@ -1,0 +1,93 @@
+diff --git a/src/dgl/bindings/components.cpp b/src/dgl/bindings/components.cpp
+index 7d840d5..2c46116 100644
+--- a/src/dgl/bindings/components.cpp
++++ b/src/dgl/bindings/components.cpp
+@@ -1,5 +1,9 @@
+ #include "dgl/bindings/components.h"
+ 
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++
+ #include <climits>
+ #include <cmath>
+ #include <type_traits>
+@@ -181,9 +185,76 @@ namespace sd::dgl {
+         return tensor_value(std::move(output));
+     }
+ 
++    static void save_video_latent_file(const char* path, const sd::Tensor<float>& t) {
++        std::ofstream out(path, std::ios::binary);
++        if (!out) {
++            throw std::runtime_error(std::string("SD_VIDEO_LATENT_SAVE: failed to open ") + path);
++        }
++        const char magic[4] = {'L', 'V', 'L', 'T'};
++        const auto& shape   = t.shape();
++        const uint32_t ndim = static_cast<uint32_t>(shape.size());
++        out.write(magic, 4);
++        out.write(reinterpret_cast<const char*>(&ndim), sizeof(ndim));
++        for (int64_t d : shape) {
++            out.write(reinterpret_cast<const char*>(&d), sizeof(d));
++        }
++        const size_t nbytes = t.numel() * sizeof(float);
++        out.write(reinterpret_cast<const char*>(t.data()), static_cast<std::streamsize>(nbytes));
++        if (!out) {
++            throw std::runtime_error(std::string("SD_VIDEO_LATENT_SAVE: write failed for ") + path);
++        }
++        LOG_INFO("SD_VIDEO_LATENT_SAVE: saved %zu floats (%.2f MB) to '%s'",
++                 t.numel(), nbytes / (1024.0 * 1024.0), path);
++    }
++
++    static sd::Tensor<float> load_video_latent_file(const char* path) {
++        std::ifstream in(path, std::ios::binary);
++        if (!in) {
++            throw std::runtime_error(std::string("SD_VIDEO_LATENT_LOAD: failed to open ") + path);
++        }
++        char magic[4] = {};
++        uint32_t ndim = 0;
++        in.read(magic, 4);
++        in.read(reinterpret_cast<char*>(&ndim), sizeof(ndim));
++        if (!in || std::memcmp(magic, "LVLT", 4) != 0 || ndim == 0 || ndim > 8) {
++            throw std::runtime_error(std::string("SD_VIDEO_LATENT_LOAD: invalid header in ") + path);
++        }
++        std::vector<int64_t> shape(ndim);
++        for (uint32_t i = 0; i < ndim; ++i) {
++            in.read(reinterpret_cast<char*>(&shape[i]), sizeof(int64_t));
++        }
++        sd::Tensor<float> t(shape);
++        const size_t nbytes = t.numel() * sizeof(float);
++        in.read(reinterpret_cast<char*>(t.data()), static_cast<std::streamsize>(nbytes));
++        if (!in) {
++            throw std::runtime_error(std::string("SD_VIDEO_LATENT_LOAD: truncated data in ") + path);
++        }
++        LOG_INFO("SD_VIDEO_LATENT_LOAD: loaded %zu floats (%.2f MB) from '%s'",
++                 t.numel(), nbytes / (1024.0 * 1024.0), path);
++        return t;
++    }
++
+     Value vae_decode(Values& args, RunState&) {
+-        auto& engine = *object<VAE>(args, "vae");
+-        auto output  = ops::decode_vae(engine, float_tensor(args, "latent"), vae_options(args));
++        auto& engine            = *object<VAE>(args, "vae");
++        sd::Tensor<float> input = float_tensor(args, "latent");
++        if (const char* save_path = std::getenv("SD_VIDEO_LATENT_SAVE"); save_path != nullptr && save_path[0] != '\0') {
++            save_video_latent_file(save_path, input);
++            if (const char* save_only = std::getenv("SD_VIDEO_LATENT_SAVE_ONLY"); save_only != nullptr && save_only[0] == '1') {
++                LOG_INFO("SD_VIDEO_LATENT_SAVE_ONLY=1: skipping in-process VAE decode");
++                sd::Tensor<float> dummy({8, 8, 1, 3, 1});
++                return get_string(args, "dtype") == "f32" ? tensor_value(std::move(dummy)) : image_to_u8(dummy);
++            }
++        }
++        if (const char* load_path = std::getenv("SD_VIDEO_LATENT_LOAD"); load_path != nullptr && load_path[0] != '\0') {
++            input = load_video_latent_file(load_path);
++            if (const char* apply_norm = std::getenv("SD_VIDEO_LATENT_DIT_TO_VAE"); apply_norm != nullptr && apply_norm[0] == '1') {
++                Model::ExecutionScope scope(engine);
++                scope.require_ready();
++                input = engine.dit_to_vae_latents(input);
++                LOG_INFO("SD_VIDEO_LATENT_DIT_TO_VAE=1: applied dit_to_vae_latents normalization");
++            }
++        }
++        auto output = ops::decode_vae(engine, input, vae_options(args));
+         return get_string(args, "dtype") == "f32" ? tensor_value(std::move(output)) : image_to_u8(output);
+     }
+ 

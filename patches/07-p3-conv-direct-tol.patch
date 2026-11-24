@@ -1,0 +1,30 @@
+diff --git a/src/core/probe/conv_direct.cpp b/src/core/probe/conv_direct.cpp
+index 7f4666a..5cd1a43 100644
+--- a/src/core/probe/conv_direct.cpp
++++ b/src/core/probe/conv_direct.cpp
+@@ -1,6 +1,8 @@
+ #include "core/probe/conv_direct.h"
+ 
++#include <algorithm>
+ #include <cmath>
++#include <cstdlib>
+ #include <exception>
+ #include <utility>
+ #include <vector>
+@@ -74,7 +76,15 @@ bool sd_probe_conv_direct(ggml_backend_t backend, bool conv3d) {
+                 test.initialize = [conv3d](BackendProbeGraph& graph) { return initialize_conv_probe(graph, conv3d); };
+                 cases.push_back(std::move(test));
+             }
+-            const auto result = sd_run_backend_probe(backend, 0, cases);
++            BackendProbeOptions probe_opts;
++            if (const char* tol_env = std::getenv("SD_CONV_DIRECT_TOL"); tol_env != nullptr && tol_env[0] != '\0') {
++                const float tol = std::strtof(tol_env, nullptr);
++                if (tol > 0.f && std::isfinite(tol)) {
++                    probe_opts.absolute_tolerance = tol;
++                    probe_opts.relative_tolerance = std::max(probe_opts.relative_tolerance, tol * 10.f);
++                }
++            }
++            const auto result = sd_run_backend_probe(backend, 0, cases, probe_opts);
+             if (!result.completed) {
+                 LOG_WARN("conv%dd direct auto: %s -> off (%s)", dims, name, result.error.c_str());
+                 return false;

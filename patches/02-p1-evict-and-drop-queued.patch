@@ -1,0 +1,62 @@
+diff --git a/src/core/segment_weight_pipeline.cpp b/src/core/segment_weight_pipeline.cpp
+index 2df9a89..a601aa2 100644
+--- a/src/core/segment_weight_pipeline.cpp
++++ b/src/core/segment_weight_pipeline.cpp
+@@ -1,5 +1,6 @@
+ #include "core/segment_weight_pipeline.h"
+ 
++#include <cstdlib>
+ #include <utility>
+ 
+ #include "core/ggml_graph_cut.h"
+@@ -95,7 +96,35 @@ namespace sd {
+         for (const auto& request : requests) {
+             if (!manager->ensure_compute_backend_capacity(request, segment_params_[segment_index],
+                                                           preferred_eviction_order(), protected_params)) {
+-                return false;
++                static const bool drop_queued = [] {
++                    const char* e = std::getenv("SD_DROP_QUEUED");
++                    return e != nullptr && e[0] == '1';
++                }();
++                static const bool evict_past = [] {
++                    const char* e = std::getenv("SD_EVICT_PAST");
++                    return e != nullptr && e[0] == '1';
++                }();
++                const bool do_drop = drop_queued && !queued_params_.empty();
++                if (!do_drop && !evict_past) {
++                    return false;
++                }
++                if (do_drop) {
++                    disable();
++                    protected_params = segment_params_[segment_index];
++                }
++                if (evict_past) {
++                    std::vector<ggml_tensor*> past;
++                    for (size_t prev = 0; prev < segment_index; ++prev) {
++                        past.insert(past.end(), segment_params_[prev].begin(), segment_params_[prev].end());
++                    }
++                    if (!past.empty()) {
++                        manager->evict_compute_backend_params(past);
++                    }
++                }
++                if (!manager->ensure_compute_backend_capacity(request, segment_params_[segment_index],
++                                                              preferred_eviction_order(), protected_params)) {
++                    return false;
++                }
+             }
+         }
+         return true;
+@@ -121,6 +150,13 @@ namespace sd {
+     void SegmentWeightPipeline::segment_end() {
+         if (auto manager = residency_manager_.lock()) {
+             manager->release_compute_backend_params(pinned_params_);
++            static const bool evict_on_end = [] {
++                const char* e = std::getenv("SD_EVICT_ON_END");
++                return e != nullptr && e[0] == '1';
++            }();
++            if (evict_on_end && !pinned_params_.empty()) {
++                manager->evict_compute_backend_params(pinned_params_);
++            }
+         }
+         pinned_params_.clear();
+     }

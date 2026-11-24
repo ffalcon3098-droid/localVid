@@ -1,0 +1,305 @@
+diff --git a/src/model/diffusion/wan.hpp b/src/model/diffusion/wan.hpp
+index 124020e..6afb1d5 100644
+--- a/src/model/diffusion/wan.hpp
++++ b/src/model/diffusion/wan.hpp
+@@ -129,7 +129,8 @@ namespace WAN {
+         virtual ggml_tensor* forward(GGMLRunnerContext* ctx,
+                                      ggml_tensor* x,
+                                      ggml_tensor* pe,
+-                                     ggml_tensor* mask = nullptr) {
++                                     ggml_tensor* mask = nullptr,
++                                     const std::string& cut_prefix = "") {
+             // x: [N, n_token, dim]
+             // pe: [n_token, d_head/2, 2, 2]
+             // return [N, n_token, dim]
+@@ -143,6 +144,97 @@ namespace WAN {
+             auto norm_q = std::dynamic_pointer_cast<UnaryBlock>(blocks["norm_q"]);
+             auto norm_k = std::dynamic_pointer_cast<UnaryBlock>(blocks["norm_k"]);
+ 
++            static const int64_t attn_head_chunk = [] {
++                const char* e = std::getenv("SD_WAN_ATTN_HEAD_CHUNK");
++                if (e == nullptr || e[0] == '\0') {
++                    return int64_t(0);
++                }
++                const long long h = std::atoll(e);
++                return h > 0 ? static_cast<int64_t>(h) : int64_t(0);
++            }();
++            static const bool attn_head_cut = [] {
++                const char* e = std::getenv("SD_WAN_ATTN_HEAD_CUT");
++                return e != nullptr && e[0] == '1';
++            }();
++            static const bool qkv_split = [] {
++                const char* e = std::getenv("SD_WAN_QKV_SPLIT");
++                return e != nullptr && e[0] == '1';
++            }();
++            static const int64_t attn_q_chunk = [] {
++                const char* e = std::getenv("SD_WAN_ATTN_Q_CHUNK");
++                if (e == nullptr || e[0] == '\0') {
++                    return int64_t(0);
++                }
++                const long long q = std::atoll(e);
++                return q > 0 ? static_cast<int64_t>(q) : int64_t(0);
++            }();
++
++            const bool use_head_split = (attn_head_chunk > 0 && attn_head_chunk < num_heads);
++            const bool use_q_split    = (attn_q_chunk > 0 && attn_q_chunk < n_token && mask == nullptr);
++
++            if (qkv_split && use_head_split && attn_head_cut && !cut_prefix.empty()) {
++                // Split Q, K, V projections into independent segments and pre-slice into head groups
++                // so each sa_h* segment only imports its own head slice (~1/10th VRAM & PCIe).
++                sd::ggml_graph_cut::mark_graph_cut(x, cut_prefix + ".sa_in", "y");
++                const int64_t h_step = attn_head_chunk;
++                std::vector<ggml_tensor*> q_slices, k_slices, v_slices;
++
++                auto q = q_proj->forward(ctx, x);
++                q      = norm_q->forward(ctx, q);
++                q      = ggml_reshape_4d(ctx->ggml_ctx, q, head_dim, num_heads, n_token, N);
++                for (int64_t h0 = 0; h0 < num_heads; h0 += h_step) {
++                    const int64_t h1 = std::min(h0 + h_step, num_heads);
++                    auto q_g         = ggml_ext_slice(ctx, q, 1, h0, h1, true);
++                    sd::ggml_graph_cut::mark_graph_cut(q_g, cut_prefix + ".sa_q", "q_" + std::to_string(h0));
++                    q_slices.push_back(q_g);
++                }
++
++                auto k = k_proj->forward(ctx, x);
++                k      = norm_k->forward(ctx, k);
++                k      = ggml_reshape_4d(ctx->ggml_ctx, k, head_dim, num_heads, n_token, N);
++                for (int64_t h0 = 0; h0 < num_heads; h0 += h_step) {
++                    const int64_t h1 = std::min(h0 + h_step, num_heads);
++                    auto k_g         = ggml_ext_slice(ctx, k, 1, h0, h1, true);
++                    sd::ggml_graph_cut::mark_graph_cut(k_g, cut_prefix + ".sa_k", "k_" + std::to_string(h0));
++                    k_slices.push_back(k_g);
++                }
++
++                auto v = v_proj->forward(ctx, x);
++                v      = ggml_reshape_4d(ctx->ggml_ctx, v, head_dim, num_heads, n_token, N);
++                for (int64_t h0 = 0; h0 < num_heads; h0 += h_step) {
++                    const int64_t h1 = std::min(h0 + h_step, num_heads);
++                    auto v_g         = ggml_ext_slice(ctx, v, 1, h0, h1, true);
++                    sd::ggml_graph_cut::mark_graph_cut(v_g, cut_prefix + ".sa_v", "v_" + std::to_string(h0));
++                    v_slices.push_back(v_g);
++                }
++
++                std::vector<ggml_tensor*> parts;
++                for (size_t gi = 0; gi < q_slices.size(); ++gi) {
++                    const int64_t h0    = static_cast<int64_t>(gi) * h_step;
++                    const int64_t h_cnt = q_slices[gi]->ne[1];
++                    ggml_tensor* part   = nullptr;
++                    if (use_q_split) {
++                        auto q_r = Rope::apply_rope(ctx, q_slices[gi], pe, true);
++                        auto k_r = Rope::apply_rope(ctx, k_slices[gi], pe, true);
++                        std::vector<ggml_tensor*> q_parts;
++                        for (int64_t q0 = 0; q0 < n_token; q0 += attn_q_chunk) {
++                            const int64_t q1 = std::min(q0 + attn_q_chunk, n_token);
++                            auto q_sub       = ggml_ext_slice(ctx, q_r, 1, q0, q1, true);
++                            auto q_out       = ggml_ext_attention_ext(ctx, q_sub, k_r, v_slices[gi], h_cnt, nullptr, true, ctx->flash_attn_enabled);
++                            q_parts.push_back(q_out);
++                        }
++                        part = ggml_ext_vec_concat(ctx, q_parts, 1);
++                    } else {
++                        part = Rope::attention(ctx, q_slices[gi], k_slices[gi], v_slices[gi], pe, mask);
++                    }
++                    sd::ggml_graph_cut::mark_graph_cut(part, cut_prefix + ".sa_h" + std::to_string(h0), "part");
++                    parts.push_back(part);
++                }
++                x = (parts.size() == 1) ? parts[0] : ggml_ext_vec_concat(ctx, parts, 0);
++                x = o_proj->forward(ctx, x);
++                return x;
++            }
++
+             auto q = q_proj->forward(ctx, x);
+             q      = norm_q->forward(ctx, q);
+             auto k = k_proj->forward(ctx, x);
+@@ -153,7 +245,44 @@ namespace WAN {
+             k = ggml_reshape_4d(ctx->ggml_ctx, k, head_dim, num_heads, n_token, N);  // [N, n_token, n_head, d_head]
+             v = ggml_reshape_4d(ctx->ggml_ctx, v, head_dim, num_heads, n_token, N);  // [N, n_token, n_head, d_head]
+ 
+-            x = Rope::attention(ctx, q, k, v, pe, mask);  // [N, n_token, dim]
++            if (use_head_split || use_q_split) {
++                const int64_t h_step = use_head_split ? attn_head_chunk : num_heads;
++                if (attn_head_cut && !cut_prefix.empty()) {
++                    sd::ggml_graph_cut::mark_graph_cut(q, cut_prefix + ".sa_qkv", "q");
++                    sd::ggml_graph_cut::mark_graph_cut(k, cut_prefix + ".sa_qkv", "k");
++                    sd::ggml_graph_cut::mark_graph_cut(v, cut_prefix + ".sa_qkv", "v");
++                }
++                std::vector<ggml_tensor*> parts;
++                for (int64_t h0 = 0; h0 < num_heads; h0 += h_step) {
++                    const int64_t h1    = std::min(h0 + h_step, num_heads);
++                    const int64_t h_cnt = h1 - h0;
++                    auto q_g            = (h_cnt < num_heads) ? ggml_ext_slice(ctx, q, 1, h0, h1, true) : q;
++                    auto k_g            = (h_cnt < num_heads) ? ggml_ext_slice(ctx, k, 1, h0, h1, true) : k;
++                    auto v_g            = (h_cnt < num_heads) ? ggml_ext_slice(ctx, v, 1, h0, h1, true) : v;
++                    ggml_tensor* part   = nullptr;
++                    if (use_q_split) {
++                        auto q_r = Rope::apply_rope(ctx, q_g, pe, true);  // [d_head, L, h_cnt * N]
++                        auto k_r = Rope::apply_rope(ctx, k_g, pe, true);  // [d_head, L, h_cnt * N]
++                        std::vector<ggml_tensor*> q_parts;
++                        for (int64_t q0 = 0; q0 < n_token; q0 += attn_q_chunk) {
++                            const int64_t q1 = std::min(q0 + attn_q_chunk, n_token);
++                            auto q_sub       = ggml_ext_slice(ctx, q_r, 1, q0, q1, true);
++                            auto q_out       = ggml_ext_attention_ext(ctx, q_sub, k_r, v_g, h_cnt, nullptr, true, ctx->flash_attn_enabled);
++                            q_parts.push_back(q_out);
++                        }
++                        part = ggml_ext_vec_concat(ctx, q_parts, 1);
++                    } else {
++                        part = Rope::attention(ctx, q_g, k_g, v_g, pe, mask);
++                    }
++                    if (attn_head_cut && !cut_prefix.empty()) {
++                        sd::ggml_graph_cut::mark_graph_cut(part, cut_prefix + ".sa_h" + std::to_string(h0), "part");
++                    }
++                    parts.push_back(part);
++                }
++                x = (parts.size() == 1) ? parts[0] : ggml_ext_vec_concat(ctx, parts, 0);
++            } else {
++                x = Rope::attention(ctx, q, k, v, pe, mask);  // [N, n_token, dim]
++            }
+ 
+             x = o_proj->forward(ctx, x);  // [N, n_token, dim]
+             return x;
+@@ -198,12 +327,35 @@ namespace WAN {
+             auto norm_q = std::dynamic_pointer_cast<UnaryBlock>(blocks["norm_q"]);
+             auto norm_k = std::dynamic_pointer_cast<UnaryBlock>(blocks["norm_k"]);
+ 
+-            auto q = q_proj->forward(ctx, x);
+-            q      = norm_q->forward(ctx, q);
+             auto k = k_proj->forward(ctx, context);  // [N, n_context, dim]
+             k      = norm_k->forward(ctx, k);
+             auto v = v_proj->forward(ctx, context);  // [N, n_context, dim]
+ 
++            static const int64_t cross_q_chunk = [] {
++                const char* e = std::getenv("SD_WAN_ATTN_Q_CHUNK");
++                if (e == nullptr || e[0] == '\0') {
++                    return int64_t(0);
++                }
++                const long long q = std::atoll(e);
++                return q > 0 ? static_cast<int64_t>(q) : int64_t(0);
++            }();
++
++            if (cross_q_chunk > 0 && cross_q_chunk < n_token) {
++                std::vector<ggml_tensor*> chunks;
++                for (int64_t q0 = 0; q0 < n_token; q0 += cross_q_chunk) {
++                    const int64_t q1 = std::min(q0 + cross_q_chunk, n_token);
++                    auto x_sub       = ggml_ext_slice(ctx, x, 1, q0, q1, true);
++                    auto q_sub       = norm_q->forward(ctx, q_proj->forward(ctx, x_sub));
++                    auto out_sub     = ggml_ext_attention_ext(ctx, q_sub, k, v, num_heads, nullptr, false, ctx->flash_attn_enabled);
++                    out_sub          = o_proj->forward(ctx, out_sub);
++                    chunks.push_back(out_sub);
++                }
++                return ggml_ext_vec_concat(ctx, chunks, 1);
++            }
++
++            auto q = q_proj->forward(ctx, x);
++            q      = norm_q->forward(ctx, q);
++
+             x = ggml_ext_attention_ext(ctx, q, k, v, num_heads, nullptr, false, ctx->flash_attn_enabled);  // [N, n_token, dim]
+ 
+             x = o_proj->forward(ctx, x);  // [N, n_token, dim]
+@@ -354,12 +506,26 @@ namespace WAN {
+                                      ggml_tensor* e,
+                                      ggml_tensor* pe,
+                                      ggml_tensor* context,
+-                                     int64_t context_img_len = 257) {
++                                     int64_t context_img_len = 257,
++                                     const std::string& cut_prefix = "") {
+             // x: [N, n_token, dim]
+             // e: [N, 6, dim] or [N, T, 6, dim]
+             // context: [N, context_img_len + context_txt_len, dim]
+             // return [N, n_token, dim]
+ 
++            static const bool split_block = [] {
++                const char* env = std::getenv("SD_WAN_SPLIT_BLOCK");
++                return env != nullptr && env[0] == '1';
++            }();
++            static const size_t mlp_chunk_bytes = [] {
++                const char* env = std::getenv("SD_WAN_MLP_CHUNK_MB");
++                if (env == nullptr || env[0] == '\0') {
++                    return size_t(0);
++                }
++                const long long mb = std::atoll(env);
++                return mb > 0 ? static_cast<size_t>(mb) * 1024ULL * 1024ULL : size_t(0);
++            }();
++
+             auto modulation = params["modulation"];
+             e               = ggml_add(ctx->ggml_ctx, e, modulation);  // [N, 6, dim] or [N, T, 6, dim]
+             auto es         = ggml_ext_chunk(ctx, e, 6, 1);            // ([N, 1, dim], ...) or [N, T, 1, dim]
+@@ -376,23 +542,52 @@ namespace WAN {
+             auto y = norm1->forward(ctx, x);
+             y      = ggml_add(ctx->ggml_ctx, y, modulate_mul(ctx->ggml_ctx, y, es[1]));
+             y      = modulate_add(ctx->ggml_ctx, y, es[0]);
+-            y      = self_attn->forward(ctx, y, pe);
++            y      = self_attn->forward(ctx, y, pe, nullptr, cut_prefix);
+ 
+             x = ggml_add(ctx->ggml_ctx, x, modulate_mul(ctx->ggml_ctx, y, es[2]));
++            if (split_block && !cut_prefix.empty()) {
++                sd::ggml_graph_cut::mark_graph_cut(x, cut_prefix + ".self_attn", "x");
++            }
+ 
+             // cross-attention
+             x = ggml_add(ctx->ggml_ctx,
+                          x,
+                          cross_attn->forward(ctx, norm3->forward(ctx, x), context, context_img_len));
++            if (split_block && !cut_prefix.empty()) {
++                sd::ggml_graph_cut::mark_graph_cut(x, cut_prefix + ".cross_attn", "x");
++            }
+ 
+             // ffn
+             y = norm2->forward(ctx, x);
+             y = ggml_add(ctx->ggml_ctx, y, modulate_mul(ctx->ggml_ctx, y, es[4]));
+             y = modulate_add(ctx->ggml_ctx, y, es[3]);
+ 
+-            y = ffn_0->forward(ctx, y);
+-            y = ggml_ext_gelu(ctx, y, true);
+-            y = ffn_2->forward(ctx, y);
++            const int64_t n_tokens = y->ne[1];
++            const size_t ffn_row_bytes = static_cast<size_t>(std::max<int64_t>(1, y->ne[0] * 3)) * sizeof(float) * static_cast<size_t>(std::max<int64_t>(1, y->ne[2]));
++            int64_t chunk_tokens = n_tokens;
++            if (mlp_chunk_bytes > 0 && n_tokens > 1) {
++                chunk_tokens = std::max<int64_t>(1, static_cast<int64_t>(mlp_chunk_bytes / std::max<size_t>(1, ffn_row_bytes)));
++                if (chunk_tokens < n_tokens) {
++                    const int64_t n_chunks = (n_tokens + chunk_tokens - 1) / chunk_tokens;
++                    chunk_tokens           = (n_tokens + n_chunks - 1) / n_chunks;
++                }
++            }
++            if (chunk_tokens < n_tokens) {
++                std::vector<ggml_tensor*> chunks;
++                for (int64_t t0 = 0; t0 < n_tokens; t0 += chunk_tokens) {
++                    const int64_t t1 = std::min(t0 + chunk_tokens, n_tokens);
++                    auto sub         = ggml_ext_slice(ctx, y, 1, t0, t1, true);
++                    sub              = ffn_0->forward(ctx, sub);
++                    sub              = ggml_ext_gelu(ctx, sub, true);
++                    sub              = ffn_2->forward(ctx, sub);
++                    chunks.push_back(sub);
++                }
++                y = ggml_ext_vec_concat(ctx, chunks, 1);
++            } else {
++                y = ffn_0->forward(ctx, y);
++                y = ggml_ext_gelu(ctx, y, true);
++                y = ffn_2->forward(ctx, y);
++            }
+ 
+             x = ggml_add(ctx->ggml_ctx, x, modulate_mul(ctx->ggml_ctx, y, es[5]));
+ 
+@@ -796,7 +991,7 @@ namespace WAN {
+             for (int i = 0; i < config.num_layers; i++) {
+                 auto block = std::dynamic_pointer_cast<WanAttentionBlock>(blocks["blocks." + std::to_string(i)]);
+ 
+-                x = block->forward(ctx, x, e0, pe, context, context_img_len);
++                x = block->forward(ctx, x, e0, pe, context, context_img_len, "wan.blocks." + std::to_string(i));
+ 
+                 auto iter = config.vace_layers_mapping.find(i);
+                 if (iter != config.vace_layers_mapping.end()) {
+@@ -991,7 +1186,13 @@ namespace WAN {
+                                  float vace_strength                             = 1.f,
+                                  const sd::Tensor<float>& audio_embed_tensor     = {},
+                                  const sd::Tensor<float>& ref_latent_tensor      = {}) {
+-            ggml_cgraph* gf = new_graph_custom(WAN_GRAPH_SIZE);
++            size_t graph_size = WAN_GRAPH_SIZE;
++            if (std::getenv("SD_WAN_ATTN_Q_CHUNK") != nullptr) {
++                graph_size = std::max<size_t>(graph_size * 16, 131072);
++            } else if (std::getenv("SD_WAN_ATTN_HEAD_CHUNK") != nullptr || std::getenv("SD_WAN_MLP_CHUNK_MB") != nullptr) {
++                graph_size = std::max<size_t>(graph_size * 8, 65536);
++            }
++            ggml_cgraph* gf = new_graph_custom(graph_size);
+ 
+             ggml_tensor* x               = make_input(x_tensor);
+             ggml_tensor* timesteps       = make_input(timesteps_tensor);

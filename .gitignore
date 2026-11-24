@@ -1,0 +1,32 @@
+# Large binaries, model weights & raw media
+bin/
+models/
+build/
+third_party/
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.avi
+*.mp4
+*.mkv
+*.lvlt
+*.latent
+*.log
+
+# Generated benchmark runs, interactive outputs & intermediate samples
+outputs/
+benchmarks/runs/
+benchmarks/samples/
+*.png
+*.jpg
+
+# Keep curated showcase media in docs/media/
+!docs/media/
+!docs/media/*.png
+
+# Python cache
+__pycache__/
+*.pyc
