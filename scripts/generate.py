@@ -438,17 +438,17 @@ def select_profile(
         "SD_STAGING_POOL_MB": "512" if vclass != "4GB" else "256",
         "SD_WAN_SPLIT_BLOCK": "1",
         "SD_WAN_ATTN_HEAD_CUT": "1",
-        "SD_WAN_MLP_CHUNK_MB": "256" if (is_5b and vclass != "4GB" and tokens <= 5200) else "128",
+        "SD_WAN_MLP_CHUNK_MB": "128",
     }
 
     if backend == "vulkan":
         flash_attn = "off"
-        # HEAD_CHUNK=12 (2 chunks/block) on 5B <=5200 tokens (e.g. 640x384x81f=5040) halves attention submits
-        # while staying ~1.2 GiB (< 2 GiB); >5200 tokens uses HEAD_CHUNK=4 to stay under dynamic VRAM floors.
+        # Proven sweet spot: HEAD_CHUNK=8 for <=5200 tokens (74.2s / 18.5s per step on 5B 81f, fits even at 1.55 GiB clamp
+        # when browser/Web Studio is open!). HEAD_CHUNK=12 needed 1,679 MB and overflowed 1.61 GiB dynamic cap.
         if vclass == "4GB":
             head_chunk = 4 if is_5b else 2
         elif is_5b:
-            head_chunk = 12 if tokens <= 5200 else 4
+            head_chunk = 8 if tokens <= 5200 else 4
         elif not long_seq and tokens <= 9600:
             head_chunk = 8
         else:
@@ -943,7 +943,9 @@ def main() -> int:
             if args.verbose:
                 sub_cmd.append("--verbose")
             print(f"[PicoVid Uzatma] '{base_vid.name}' ({base_w}x{base_h} @ {base_fps:.1f}fps) son karesinden uzatılıyor...", flush=True)
-            p_ext = subprocess.run(sub_cmd)
+            ext_env = os.environ.copy()
+            ext_env["PYTHONUNBUFFERED"] = "1"
+            p_ext = subprocess.run(sub_cmd, env=ext_env)
             if p_ext.returncode != 0 or not new_seg_mp4.exists():
                 return p_ext.returncode or 1
             out_mp4 = args.output.resolve()
@@ -1088,7 +1090,9 @@ def main() -> int:
                 if args.taesd:
                     sub_cmd += ["--taesd", str(args.taesd)]
 
-                p_seg = subprocess.run(sub_cmd)
+                seg_env = os.environ.copy()
+                seg_env["PYTHONUNBUFFERED"] = "1"
+                p_seg = subprocess.run(sub_cmd, env=seg_env)
                 if p_seg.returncode != 0 or not seg_out.exists():
                     print(f"HATA: Bölüm {seg_num}/{seg_count} başarısız oldu (exit={p_seg.returncode}).", file=sys.stderr)
                     return p_seg.returncode or 1

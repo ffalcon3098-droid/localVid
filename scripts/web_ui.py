@@ -89,6 +89,10 @@ class StudioState:
         self.last_error: str | None = None
         self.proc: subprocess.Popen[str] | None = None
         self._cancel_requested: bool = False
+        self._dit_steps_done: int = 0
+        self._dit_steps_total: int = 4
+        self._dit_last_seg: int = 0
+        self._seg_prefix: str = ""
 
     def shutdown(self) -> None:
         self.cancel_job()
@@ -147,25 +151,44 @@ class StudioState:
         clean = ui_console.RE_ANSI.sub("", line).strip()
         if not clean:
             return
+        # Skip repetitive 825-tensor mmap/loading progress spam so live block/step updates stay visible
+        noisy_load = (
+            "memory-mapped " in clean
+            or ("loading " in clean and "/825 tensors" in clean)
+            or ("loading tensors completed" in clean)
+            or ("|#" in clean and "MB/s" in clean)
+        )
         with self.lock:
-            self.logs.append(clean)
-            if len(self.logs) > 250:
-                self.logs = self.logs[-250:]
+            if not noisy_load:
+                self.logs.append(clean)
+                if len(self.logs) > 200:
+                    self.logs = self.logs[-200:]
 
-            # Lightweight live stage & progress parser
-            if "[PicoVid Zincir] Bölüm" in clean:
-                self.stage = clean.replace("[PicoVid Zincir]", "").strip()
+            # Track multi-segment chain header (e.g. "[PicoVid Zincir] Bölüm 1/2 başlıyor...")
+            m_ch = re.search(r"\[PicoVid Zincir\]\s*(Bölüm\s+\d+/\d+)", clean)
+            if m_ch:
+                self._seg_prefix = m_ch.group(1) + " · "
+                self._dit_steps_done = 0
+                self._dit_last_seg = 0
+                self.stage = f"{self._seg_prefix}Başlatılıyor"
                 self.detail = clean
-            elif "Metin Kodlama" in clean or "computing condition graph" in clean:
-                self.stage = "1/4 Metin & Görsel Kodlama"
-                self.progress_pct = max(self.progress_pct, 12.0)
+                return
+
+            if "Metin Kodlama" in clean or "computing condition graph" in clean:
+                self.stage = f"{self._seg_prefix}1/4 Metin & Görsel Kodlama"
+                self.progress_pct = max(self.progress_pct, 10.0)
                 self.detail = clean
             elif "sampling started:" in clean or "DiT Örnekleme" in clean:
-                self.stage = "2/4 DiT Video Üretimi"
-                self.progress_pct = max(self.progress_pct, 22.0)
+                m_st_tot = ui_console.RE_SAMPLE_START.search(clean)
+                if m_st_tot:
+                    self._dit_steps_total = max(1, int(m_st_tot.group(2)))
+                self._dit_steps_done = 0
+                self._dit_last_seg = 0
+                self.stage = f"{self._seg_prefix}2/4 DiT Video Üretimi"
+                self.progress_pct = max(self.progress_pct, 20.0)
                 self.detail = clean
             elif "VAE Decode" in clean or "SD_VIDEO_LATENT_LOAD" in clean:
-                self.stage = "3/4 Wan VAE Decode"
+                self.stage = f"{self._seg_prefix}3/4 Wan VAE Decode"
                 self.progress_pct = max(self.progress_pct, 58.0)
                 self.detail = clean
             elif "Sinema HD" in clean or "birleştiriliyor" in clean or "MP4 Paketleme" in clean:
@@ -173,12 +196,36 @@ class StudioState:
                 self.progress_pct = max(self.progress_pct, 88.0)
                 self.detail = clean
 
+            # Live per-block DiT progress via SD_SEG_TIMING=2 (updates every ~0.2s!)
+            m_seg = ui_console.RE_SEG_TIMING.search(clean)
+            if m_seg and ("Wan" in m_seg.group(1) or "wan" in m_seg.group(1)):
+                seg_idx = int(m_seg.group(2))
+                seg_tot = max(1, int(m_seg.group(3)))
+                seg_name = m_seg.group(4)
+                seg_ms = float(m_seg.group(5))
+                if seg_idx < self._dit_last_seg and self._dit_steps_done < self._dit_steps_total - 1:
+                    if self._dit_last_seg > seg_tot * 0.8:
+                        self._dit_steps_done += 1
+                self._dit_last_seg = seg_idx
+                cur_step = min(self._dit_steps_total, self._dit_steps_done + 1)
+                frac = (self._dit_steps_done + (seg_idx / seg_tot)) / max(1, self._dit_steps_total)
+                self.progress_pct = 20.0 + min(0.99, frac) * 38.0
+                m_blk = ui_console.RE_BLOCK_NAME.search(seg_name)
+                if m_blk:
+                    blk_tot = 30 if "5B" in m_seg.group(1) else 40
+                    self.detail = f"Adım {cur_step}/{self._dit_steps_total} · Blok {int(m_blk.group(1))+1}/{blk_tot} ({m_blk.group(2)}, {seg_ms:.0f} ms)"
+                else:
+                    self.detail = f"Adım {cur_step}/{self._dit_steps_total} · {seg_name} ({seg_ms:.0f} ms)"
+                return
+
             m_pb = ui_console.RE_PROGRESS_BAR.search(clean)
             if m_pb and "=" in line:
                 cur_i, tot_i = int(m_pb.group(1)), max(1, int(m_pb.group(2)))
                 frac = cur_i / tot_i
                 if "2/4" in self.stage:
-                    self.progress_pct = 22.0 + frac * 35.0
+                    self._dit_steps_done = max(self._dit_steps_done, cur_i)
+                    self._dit_last_seg = 0
+                    self.progress_pct = 20.0 + frac * 38.0
                     self.detail = f"DiT Adım {cur_i}/{tot_i} ({m_pb.group(3)} {m_pb.group(4)})"
                 elif "3/4" in self.stage:
                     self.progress_pct = 58.0 + frac * 30.0
@@ -201,13 +248,21 @@ class StudioState:
             self.logs = [f"$ {' '.join(cmd)}"]
             self.last_error = None
             self._cancel_requested = False
+            self._dit_steps_done = 0
+            self._dit_steps_total = 4
+            self._dit_last_seg = 0
+            self._seg_prefix = ""
 
         def _runner() -> None:
             rc = 1
             try:
+                sub_env = os.environ.copy()
+                sub_env["PYTHONUNBUFFERED"] = "1"
+                sub_env["SD_SEG_TIMING"] = "2"
                 proc = subprocess.Popen(
                     cmd,
                     cwd=str(REPO_ROOT),
+                    env=sub_env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,

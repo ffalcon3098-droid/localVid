@@ -101,8 +101,8 @@ class TestProfileAndTokenMath(unittest.TestCase):
         hw = generate.detect_hardware("vulkan-6gb")
         p81 = generate.select_profile(hw, frames=81, fast_preview=False, width=640, height=384, engine="5b")
         self.assertEqual(p81["dit_tokens"], 5040)
-        self.assertEqual(p81["env_p1"]["SD_WAN_ATTN_HEAD_CHUNK"], "12")
-        self.assertEqual(p81["env_p1"]["SD_WAN_MLP_CHUNK_MB"], "256")
+        self.assertEqual(p81["env_p1"]["SD_WAN_ATTN_HEAD_CHUNK"], "8")
+        self.assertEqual(p81["env_p1"]["SD_WAN_MLP_CHUNK_MB"], "128")
         self.assertEqual(p81["flash_attn"], "off")
 
         p480 = generate.select_profile(hw, frames=81, fast_preview=False, width=832, height=480, engine="5b")
