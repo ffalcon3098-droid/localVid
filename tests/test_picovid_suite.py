@@ -154,7 +154,7 @@ class TestWebStudioServer(unittest.TestCase):
                 html = r.read().decode("utf-8")
                 self.assertIn("PicoVid Studio", html)
 
-            for ep in ("/api/hardware", "/api/status", "/api/gallery"):
+            for ep in ("/api/hardware", "/api/status", "/api/gallery", "/api/models"):
                 with urllib.request.urlopen(f"{base}{ep}", timeout=5) as r:
                     self.assertEqual(r.status, 200)
                     data = json.loads(r.read().decode("utf-8"))

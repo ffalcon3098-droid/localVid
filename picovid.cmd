@@ -21,6 +21,12 @@ if not %errorlevel%==0 (
     )
 )
 
+if /i "%~1"=="--web" (
+    shift
+    %PY_CMD% scripts\web_ui.py %2 %3 %4 %5 %6 %7 %8 %9
+    exit /b %errorlevel%
+)
+
 %PY_CMD% scripts\generate.py %*
 set "LV_EXIT=%errorlevel%"
 

@@ -102,8 +102,9 @@ py scripts/download_models.py --profile studio-compact         # Stüdyo Kompakt
 ### 3. Video Üret (Yerel Web Stüdyosu, İnteraktif TUI veya Tek Komut CLI)
 
 ```powershell
-# Yerel Web Stüdyosu (ek kurulum gerektirmez — http://127.0.0.1:7860, canlı VRAM, önizleme/onay & galeri)
-.\picovid-web.cmd
+# Yerel Web Stüdyosu (ek kurulum gerektirmez — http://127.0.0.1:7860, canlı VRAM, önizleme/onay, model durumu & +5sn Uzat)
+.\web-studio.cmd
+# veya: .\picovid.cmd --web
 
 # İnteraktif terminal sihirbazı (5sn/10sn/15sn seçenekleri, T2V / I2V / Stüdyo Modu)
 .\picovid.cmd

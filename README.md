@@ -123,8 +123,9 @@ py scripts/download_models.py --profile studio-compact         # Studio Compact 
 ### 3. Generate Video (Local Web Studio, Interactive TUI, or One-Command CLI)
 
 ```powershell
-# Local Web Studio UI (zero extra deps — opens http://127.0.0.1:7860 with live VRAM bars, Studio T2I->I2V loop & gallery)
-.\picovid-web.cmd
+# Local Web Studio UI (zero extra deps — opens http://127.0.0.1:7860 with live VRAM bars, Studio T2I->I2V loop, gallery & +5s Extend)
+.\web-studio.cmd
+# or: .\picovid.cmd --web
 
 # Interactive terminal wizard (5s/10s/15s presets, T2V / I2V / Studio Mode)
 .\picovid.cmd

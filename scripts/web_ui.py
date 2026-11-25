@@ -42,8 +42,29 @@ UPLOADS_DIR = OUTPUTS_DIR / "_uploads"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+import download_models  # noqa: E402
 import generate  # noqa: E402
 import ui_console  # noqa: E402
+
+
+def get_models_status() -> dict[str, Any]:
+    """Check installed vs missing status for key PicoVid profiles."""
+    reg = download_models.load_registry()
+    files_map = reg.get("files", {})
+    profiles = reg.get("download_profiles", {})
+    out: dict[str, Any] = {}
+    for pname in ("fast-5b", "t2i", "t2v", "i2v", "studio"):
+        if pname not in profiles:
+            continue
+        req = profiles[pname]["required"]
+        rem = sum(download_models.check_file(files_map[fid])[2] for fid in req if fid in files_map)
+        tot = sum(int(files_map[fid]["expected_bytes"]) for fid in req if fid in files_map)
+        out[pname] = {
+            "ready": rem == 0,
+            "remaining_gib": round(rem / (1024**3), 2),
+            "total_gib": round(tot / (1024**3), 2),
+        }
+    return out
 
 
 class StudioState:
@@ -270,8 +291,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
 :root{--bg:#090d16;--panel:#111827;--panel2:#162033;--border:#24324a;--accent:#38bdf8;--accent2:#818cf8;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--text:#f1f5f9;--muted:#94a3b8}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0%,#132038,#090d16 55%);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif;min-height:100vh}
 header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(17,24,39,.85);backdrop-filter:blur(10px);position:sticky;top:0;z-index:10;gap:16px;flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:12px}.logo{font-size:22px;font-weight:800;letter-spacing:-.5px;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.logo{font-size:22px;font-weight:800;letter-spacing:-.5px;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .badge{font-size:11px;padding:3px 8px;border-radius:999px;background:rgba(56,189,248,.14);color:var(--accent);border:1px solid rgba(56,189,248,.3)}
+.mbadge{font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);background:#0f172a;cursor:pointer}
+.mbadge.ok{color:var(--ok);border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.1);cursor:default}
+.mbadge.miss{color:var(--warn);border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
+.gfoot{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 8px}
+.gfoot .gmeta{padding:0;flex:1;min-width:0}
+.ext-btn{border:1px solid rgba(56,189,248,.4);background:rgba(56,189,248,.12);color:var(--accent);border-radius:6px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+.ext-btn:hover{background:rgba(56,189,248,.25);color:#fff}
 .vram-strip{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--muted)}
 .vbar{width:110px;height:8px;background:#1e293b;border-radius:999px;overflow:hidden}.vbar-fill{height:100%;background:linear-gradient(90deg,var(--ok),var(--accent));transition:width .4s}
 main{display:grid;grid-template-columns:430px 1fr;gap:20px;padding:20px 24px;max-width:1480px;margin:0 auto}
@@ -314,8 +342,9 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent)}
 <header>
   <div class="brand">
     <div class="logo">PicoVid Studio</div>
-    <span class="badge">v0.4.0 · 4-6 GB VRAM Engine</span>
+    <span class="badge">v0.4.1 · 4-6 GB VRAM Engine</span>
     <span id="gpuName" style="font-size:12px;color:var(--muted)">GPU okunuyor...</span>
+    <span id="modelBadges" style="display:flex;gap:6px;flex-wrap:wrap"></span>
   </div>
   <div class="vram-strip">
     <span>Dedicated: <strong id="vramDed">-</strong></span>
@@ -536,6 +565,46 @@ function showInPreview(url, kind) {
   else box.innerHTML = `<img src="${url}">`;
 }
 
+async function loadModelsStatus() {
+  try {
+    const r = await fetch('/api/models');
+    const m = await r.json();
+    const defs = [['fast-5b','5B Turbo'], ['t2i','T2I'], ['t2v','14B T2V'], ['i2v','14B I2V']];
+    document.getElementById('modelBadges').innerHTML = defs.map(([k, lbl]) => {
+      const info = m[k]; if (!info) return '';
+      if (info.ready) return `<span class="mbadge ok" title="${lbl} kurulu">${lbl} ✓</span>`;
+      return `<span class="mbadge miss" title="İndirmek için tıklayın (${info.remaining_gib} GiB)" onclick="downloadProfile('${k}', ${info.remaining_gib})">${lbl} ↓ ${info.remaining_gib}G</span>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function downloadProfile(profile, gib) {
+  if (!confirm(`'${profile}' modeli (~${gib} GiB) şimdi indirilsin mi?`)) return;
+  const r = await fetch('/api/download-model', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile})});
+  const d = await r.json();
+  if (!d.ok) alert(d.error || 'İndirme başlatılamadı');
+}
+
+async function extendVideo(relPath, ev) {
+  if (ev) ev.stopPropagation();
+  const [w, h] = document.getElementById('res').value.split('x').map(Number);
+  const eng = document.getElementById('engine').value;
+  const frames = eng === '5b' ? 81 : 33;
+  const promptTxt = document.getElementById('prompt').value.trim() || 'Continue smooth natural cinematic camera motion, 35mm film';
+  if (!confirm(`"${relPath.split('/').pop()}" videosu son karesinden +${(frames/16).toFixed(1)} sn uzatılsın mı?`)) return;
+  const r = await fetch('/api/extend', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      base_video: relPath, engine: eng, prompt: promptTxt,
+      width: w, height: h, frames, fps: 16,
+      cinema_hd: document.getElementById('cinemaHd').checked,
+      fast_preview: document.getElementById('fastPreview').checked
+    })
+  });
+  const d = await r.json();
+  if (!d.ok) alert(d.error || 'Uzatma başlatılamadı');
+}
+
 async function loadGallery() {
   const r = await fetch('/api/gallery');
   const d = await r.json();
@@ -543,7 +612,10 @@ async function loadGallery() {
   g.innerHTML = d.items.map(it => `
     <div class="gitem" onclick="showInPreview('${it.url}','${it.kind}')">
       ${it.kind === 'video' ? `<video src="${it.url}" muted preload="metadata"></video>` : `<img src="${it.url}">`}
-      <div class="gmeta" title="${it.name}">${it.name} · ${it.size_mb} MB</div>
+      <div class="gfoot">
+        <div class="gmeta" title="${it.name}">${it.name} · ${it.size_mb}M</div>
+        ${it.kind === 'video' ? `<button class="ext-btn" title="Son karesinden +5 sn uzat" onclick="extendVideo('${it.rel}', event)">+5s Uzat</button>` : ''}
+      </div>
     </div>`).join('') || '<div style="color:var(--muted);font-size:12px">Henüz çıktı yok.</div>';
 }
 
@@ -589,6 +661,7 @@ fetch('/api/hardware').then(r => r.json()).then(hw => {
   document.getElementById('gpuName').textContent = `${hw.gpu_name} · ${hw.backend.toUpperCase()} (${hw.vram_class})`;
 });
 loadGallery();
+loadModelsStatus();
 setInterval(pollStatus, 1200);
 pollStatus();
 </script>
@@ -635,6 +708,9 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
             if path == "/api/gallery":
                 self._send_json({"items": list_gallery_items()})
                 return
+            if path == "/api/models":
+                self._send_json(get_models_status())
+                return
             if path.startswith("/files/"):
                 rel = urllib.parse.unquote(path[len("/files/"):]).lstrip("/")
                 target = (REPO_ROOT / rel).resolve()
@@ -678,6 +754,45 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 dest.write_bytes(base64.b64decode(b64))
                 rel = dest.relative_to(REPO_ROOT).as_posix()
                 self._send_json({"ok": True, "rel_path": rel, "url": f"/files/{urllib.parse.quote(rel)}"})
+                return
+
+            if path == "/api/download-model":
+                profile = str(body.get("profile", "fast-5b"))
+                cmd = [sys.executable, str(SCRIPT_DIR / "download_models.py"), "--profile", profile]
+                ok, msg = state.start_job("download", cmd, "configs/models_registry.json")
+                self._send_json({"ok": ok, "message": msg, "profile": profile}, 200 if ok else 409)
+                return
+
+            if path == "/api/extend":
+                base_rel = str(body.get("base_video", "")).lstrip("/")
+                base_abs = (REPO_ROOT / base_rel).resolve()
+                if not str(base_abs).startswith(str(REPO_ROOT.resolve())) or not base_abs.exists():
+                    self._send_json({"ok": False, "error": "Uzatılacak video bulunamadı."}, 404)
+                    return
+                engine = str(body.get("engine", "5b"))
+                prompt = str(body.get("prompt") or "Continue smooth natural cinematic camera motion, 35mm film").strip()
+                w = int(body.get("width", 640))
+                h = int(body.get("height", 384))
+                frames = int(body.get("frames", 81 if engine == "5b" else 33))
+                fps = int(body.get("fps", 16))
+                cinema_hd = bool(body.get("cinema_hd", True))
+                fast_preview = bool(body.get("fast_preview", False))
+                OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                out_rel = f"outputs/extended_{base_abs.stem}_{ts}.mp4"
+                cmd = [
+                    sys.executable, str(SCRIPT_DIR / "generate.py"),
+                    "--engine", engine, "--extend-video", str(base_abs),
+                    "-p", prompt, "-W", str(w), "-H", str(h),
+                    "-f", str(frames), "--fps", str(fps),
+                    "-o", out_rel, "--raw-logs",
+                ]
+                if cinema_hd and not fast_preview:
+                    cmd.append("--cinema-hd")
+                if fast_preview:
+                    cmd.append("--fast-preview")
+                ok, msg = state.start_job("video", cmd, out_rel)
+                self._send_json({"ok": ok, "message": msg, "out_rel": out_rel}, 200 if ok else 409)
                 return
 
             if path == "/api/t2i":
