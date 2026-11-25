@@ -2,6 +2,7 @@
     [ValidateSet("auto", "cuda", "vulkan")]
     [string]$Backend = "auto",
     [string]$Profile = "auto",
+    [switch]$BuildFromSource,
     [switch]$SkipModels,
     [switch]$CheckOnly,
     [switch]$Yes
@@ -10,6 +11,10 @@
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $RepoRoot
+
+$ReleaseRepo = "ffalcon3098-droid/localVid"
+$ReleaseTag  = "v0.5.1"
+$PrebuiltAsset = "picovid-sd-cli-win64-vulkan.zip"
 
 function Refresh-EnvPath {
     $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -44,25 +49,50 @@ function Find-VCVars {
             if (Test-Path $vc) { return $vc }
         }
     }
-    foreach ($root in @(
-        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools",
-        "C:\Program Files\Microsoft Visual Studio\2022\Community",
-        "C:\Program Files\Microsoft Visual Studio\2022\Professional",
-        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise"
+    foreach ($baseDir in @(
+        "C:\Program Files\Microsoft Visual Studio",
+        "C:\Program Files (x86)\Microsoft Visual Studio"
     )) {
-        $vc = Join-Path $root "VC\Auxiliary\Build\vcvars64.bat"
-        if (Test-Path $vc) { return $vc }
+        if (Test-Path $baseDir) {
+            $found = Get-ChildItem -Path $baseDir -Filter "vcvars64.bat" -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { return $found.FullName }
+        }
     }
     return $null
 }
 
-function Detect-TargetBackend {
-    if ($Backend -ne "auto") { return $Backend }
-    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
-        $gpu = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
-        if ($LASTEXITCODE -eq 0 -and $gpu) { return "cuda" }
+function Install-VCToolsSafe {
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+
+    # If VS is already installed without C++ tools, modify it directly instead of failing in winget!
+    if ((Test-Path $vswhere) -and (Test-Path $vsInstaller)) {
+        $existing = & $vswhere -latest -products * -property installationPath 2>$null
+        if ($existing) {
+            $instPath = (@($existing) | Where-Object { $_ -and $_.Trim() } | Select-Object -First 1).Trim()
+            if ($instPath -and (Test-Path $instPath)) {
+                Write-Host "      Mevcut Visual Studio ($instPath) uzerine C++ Build Tools ekleniyor..." -ForegroundColor Cyan
+                $p = Start-Process -FilePath $vsInstaller -ArgumentList @(
+                    "modify", "--installPath", "`"$instPath`"",
+                    "--add", "Microsoft.VisualStudio.Workload.VCTools",
+                    "--add", "Microsoft.VisualStudio.Component.VC.CMake.Project",
+                    "--includeRecommended", "--passive", "--norestart"
+                ) -Wait -PassThru
+                Refresh-EnvPath
+                $vc = Find-VCVars
+                if ($vc) { return $vc }
+            }
+        }
     }
-    return "vulkan"
+
+    if (Ensure-Winget) {
+        Write-Host "      Visual Studio 2022 Build Tools (C++ + CMake) kuruluyor..." -ForegroundColor Cyan
+        winget install -e --id Microsoft.VisualStudio.2022.BuildTools --accept-package-agreements --accept-source-agreements --override "--passive --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended" | Out-Null
+        Refresh-EnvPath
+        $vc = Find-VCVars
+        if ($vc) { return $vc }
+    }
+    return $null
 }
 
 function Find-CudaNvcc {
@@ -81,9 +111,97 @@ function Find-VulkanSdk {
     return $null
 }
 
+function Detect-TargetBackend {
+    if ($Backend -ne "auto") { return $Backend }
+    # If CUDA Toolkit + NVIDIA GPU are both ready AND user wants source build, pick CUDA.
+    # Otherwise Vulkan works out-of-the-box on AMD, Intel AND NVIDIA GPUs with our prebuilt binary!
+    if ($BuildFromSource -and (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+        $gpu = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+        if ($LASTEXITCODE -eq 0 -and $gpu) { return "cuda" }
+    }
+    if ((Test-Path (Join-Path $RepoRoot "build\sdcpp-cuda\bin\sd-cli.exe"))) { return "cuda" }
+    return "vulkan"
+}
+
+function Try-DownloadPrebuiltBinary {
+    param([string]$DestBinDir)
+    New-Item -ItemType Directory -Force -Path $DestBinDir | Out-Null
+    $tmpZip = Join-Path $env:TEMP $PrebuiltAsset
+    if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
+
+    Write-Host "`n[Hizli Kurulum] Hazir derlenmis sd-cli.exe ($ReleaseTag · Vulkan — AMD/Intel/NVIDIA uyumlu) indiriliyor..." -ForegroundColor Cyan
+    Write-Host "                (Visual Studio / C++ / SDK derlemesine gerek kalmaz!)" -ForegroundColor Green
+
+    $downloaded = $false
+
+    # Method 1: GitHub CLI (handles both private and public repos seamlessly)
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        try {
+            & gh release download $ReleaseTag --repo $ReleaseRepo --pattern $PrebuiltAsset --dir $env:TEMP --clobber 2>$null
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $tmpZip) -and ((Get-Item $tmpZip).Length -gt 1000000)) {
+                $downloaded = $true
+            }
+        } catch {}
+    }
+
+    # Method 2: Git credential token + GitHub Release Asset API (works for private repos using existing git login!)
+    if (-not $downloaded -and (Get-Command git -ErrorAction SilentlyContinue)) {
+        try {
+            $credText = "protocol=https`nhost=github.com`n`n" | & git credential fill 2>$null
+            $tokenLine = ($credText | Where-Object { $_ -match "^password=" } | Select-Object -First 1)
+            if ($tokenLine) {
+                $token = $tokenLine.Substring(9).Trim()
+                $headers = @{
+                    "Authorization" = "Bearer $token"
+                    "User-Agent"    = "PicoVid/0.5.1"
+                    "Accept"        = "application/vnd.github+json"
+                }
+                $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$ReleaseRepo/releases/tags/$ReleaseTag" -Headers $headers -TimeoutSec 20
+                $asset = $rel.assets | Where-Object { $_.name -eq $PrebuiltAsset } | Select-Object -First 1
+                if ($asset) {
+                    $dlHeaders = @{
+                        "Authorization" = "Bearer $token"
+                        "User-Agent"    = "PicoVid/0.5.1"
+                        "Accept"        = "application/octet-stream"
+                    }
+                    Invoke-WebRequest -Uri $asset.url -Headers $dlHeaders -OutFile $tmpZip -TimeoutSec 120
+                    if ((Test-Path $tmpZip) -and ((Get-Item $tmpZip).Length -gt 1000000)) {
+                        $downloaded = $true
+                    }
+                }
+            }
+        } catch {}
+    }
+
+    # Method 3: Public direct download fallback
+    if (-not $downloaded) {
+        try {
+            $pubUrl = "https://github.com/$ReleaseRepo/releases/download/$ReleaseTag/$PrebuiltAsset"
+            & curl.exe -L --fail -# $pubUrl -o $tmpZip 2>$null
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $tmpZip) -and ((Get-Item $tmpZip).Length -gt 1000000)) {
+                $downloaded = $true
+            }
+        } catch {}
+    }
+
+    if (-not $downloaded) {
+        Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    Expand-Archive -Path $tmpZip -DestinationPath $DestBinDir -Force
+    Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+    $exePath = Join-Path $DestBinDir "sd-cli.exe"
+    if (Test-Path $exePath) {
+        Write-Host "  [OK] Hazir sd-cli.exe indirildi ve kuruldu: $exePath" -ForegroundColor Green
+        return $true
+    }
+    return $false
+}
+
 Write-Host ""
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "  PicoVid v0.5.0 · Sifirdan Otomatik Kurulum Sihirbazi (Windows)" -ForegroundColor Cyan
+Write-Host "  PicoVid v0.5.1 · Sifirdan Otomatik Kurulum Sihirbazi (Windows)" -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 
 $targetBackend = Detect-TargetBackend
@@ -92,16 +210,14 @@ $hasGit        = [bool](Get-Command git -ErrorAction SilentlyContinue)
 $pyCmd         = Find-Python
 $vcVars        = Find-VCVars
 $sdkPath       = if ($targetBackend -eq "cuda") { Find-CudaNvcc } else { Find-VulkanSdk }
-$hasBin        = Test-Path $sdCliPath
+$hasBin        = (Test-Path $sdCliPath) -or (Test-Path (Join-Path $RepoRoot "build\sdcpp-vulkan\bin\sd-cli.exe"))
 $hasRealesrgan = Test-Path (Join-Path $RepoRoot "tools\realesrgan\realesrgan-ncnn-vulkan.exe")
 
-Write-Host ("  Algilanan Backend   : " + $targetBackend.ToUpper()) -ForegroundColor Green
+Write-Host ("  Hedef Backend       : " + $targetBackend.ToUpper() + $(if (-not $BuildFromSource -and $targetBackend -eq "vulkan") { " (Hazir binary — VS C++ gerekmez!)" } else { "" })) -ForegroundColor Green
 Write-Host ("  [1] Git             : " + $(if ($hasGit) { "HAZIR" } else { "EKSIK (kurulacak)" }))
 Write-Host ("  [2] Python 3        : " + $(if ($pyCmd) { "HAZIR ($pyCmd)" } else { "EKSIK (kurulacak)" }))
-Write-Host ("  [3] VS C++ Tools    : " + $(if ($vcVars) { "HAZIR" } elseif ($hasBin) { "GEREKMIYOR (sd-cli hazir)" } else { "EKSIK (kurulacak)" }))
-Write-Host ("  [4] $($targetBackend.ToUpper()) SDK       : " + $(if ($sdkPath) { "HAZIR ($sdkPath)" } elseif ($hasBin) { "GEREKMIYOR (sd-cli hazir)" } else { "EKSIK (kurulacak)" }))
-Write-Host ("  [5] sd-cli.exe      : " + $(if ($hasBin) { "HAZIR ($sdCliPath)" } else { "DERLENECEK" }))
-Write-Host ("  [6] Cinema HD Tool  : " + $(if ($hasRealesrgan) { "HAZIR" } else { "INDIRILECEK (43 MB)" }))
+Write-Host ("  [3] sd-cli.exe      : " + $(if ($hasBin) { "HAZIR" } elseif (-not $BuildFromSource -and $targetBackend -eq "vulkan") { "HAZIR BINARY INDIRILECEK (~30 MB)" } else { "KAYNAKTAN DERLENECEK" }))
+Write-Host ("  [4] Cinema HD Tool  : " + $(if ($hasRealesrgan) { "HAZIR" } else { "INDIRILECEK (43 MB)" }))
 Write-Host "=================================================================" -ForegroundColor Cyan
 
 if ($CheckOnly) {
@@ -111,7 +227,7 @@ if ($CheckOnly) {
 
 # 1. Git
 if (-not $hasGit) {
-    Write-Host "`n[1/7] Git kuruluyor..." -ForegroundColor Cyan
+    Write-Host "`n[1/5] Git kuruluyor..." -ForegroundColor Cyan
     if (Ensure-Winget) {
         winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
         Refresh-EnvPath
@@ -120,7 +236,7 @@ if (-not $hasGit) {
 
 # 2. Python 3.12
 if (-not $pyCmd) {
-    Write-Host "`n[2/7] Python 3.12 kuruluyor..." -ForegroundColor Cyan
+    Write-Host "`n[2/5] Python 3.12 kuruluyor..." -ForegroundColor Cyan
     if (Ensure-Winget) {
         winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
         Refresh-EnvPath
@@ -130,70 +246,65 @@ if (-not $pyCmd) {
 }
 
 # 3. Python packages
-Write-Host "`n[3/7] Python paketleri (requirements.txt) kontrol ediliyor..." -ForegroundColor Cyan
+Write-Host "`n[3/5] Python paketleri (requirements.txt) kontrol ediliyor..." -ForegroundColor Cyan
 & $pyCmd -m pip install --upgrade pip --quiet 2>$null
 & $pyCmd -m pip install -r (Join-Path $RepoRoot "requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt basarisiz oldu!" }
 
-# 4 & 5. Build prerequisites + sd-cli.exe compilation (only if binary not already present)
+# 4. Get sd-cli.exe: try prebuilt binary FIRST (zero VS/C++/SDK needed!), fallback to local build
 if (-not $hasBin) {
-    if (-not $vcVars) {
-        Write-Host "`n[4/7] Visual Studio 2022 C++ Build Tools + CMake kuruluyor (birkaç dakika surebilir)..." -ForegroundColor Cyan
-        if (Ensure-Winget) {
-            winget install -e --id Microsoft.VisualStudio.2022.BuildTools --accept-package-agreements --accept-source-agreements --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended"
-            Refresh-EnvPath
-            $vcVars = Find-VCVars
-        }
-        if (-not $vcVars) { throw "Visual Studio C++ Build Tools kurulamadi. Lutfen kurulumdan sonra setup.cmd'yi tekrar calistirin." }
+    $gotPrebuilt = $false
+    if (-not $BuildFromSource -and $targetBackend -eq "vulkan") {
+        $gotPrebuilt = Try-DownloadPrebuiltBinary -DestBinDir (Join-Path $RepoRoot "build\sdcpp-vulkan\bin")
     }
 
-    if (-not $sdkPath) {
-        if ($targetBackend -eq "cuda") {
-            Write-Host "`n[5/7] NVIDIA CUDA Toolkit kuruluyor..." -ForegroundColor Cyan
-            if (Ensure-Winget) {
-                winget install -e --id Nvidia.CUDA --accept-package-agreements --accept-source-agreements
-                Refresh-EnvPath
-            }
-        } else {
-            Write-Host "`n[5/7] Khronos Vulkan SDK kuruluyor..." -ForegroundColor Cyan
-            if (Ensure-Winget) {
-                winget install -e --id KhronosGroup.VulkanSDK --accept-package-agreements --accept-source-agreements
-                Refresh-EnvPath
+    if (-not $gotPrebuilt) {
+        Write-Host "`n[4/5] Hazir binary indirilemedi veya -BuildFromSource secildi; kaynaktan derleniyor..." -ForegroundColor Yellow
+        if (-not $vcVars) {
+            $vcVars = Install-VCToolsSafe
+            if (-not $vcVars) {
+                throw "Visual Studio C++ Build Tools (vcvars64.bat) bulunamadi. Visual Studio Installer -> Modify -> 'Desktop development with C++' secip tekrar deneyin."
             }
         }
+        if (-not $sdkPath) {
+            if ($targetBackend -eq "cuda") {
+                if (Ensure-Winget) {
+                    winget install -e --id Nvidia.CUDA --accept-package-agreements --accept-source-agreements
+                    Refresh-EnvPath
+                }
+            } else {
+                if (Ensure-Winget) {
+                    winget install -e --id KhronosGroup.VulkanSDK --accept-package-agreements --accept-source-agreements
+                    Refresh-EnvPath
+                }
+            }
+        }
+        $srcDir = Join-Path $RepoRoot "third_party\stable-diffusion.cpp"
+        if (-not (Test-Path (Join-Path $srcDir ".git"))) {
+            git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/leejet/stable-diffusion.cpp.git $srcDir
+            if ($LASTEXITCODE -ne 0) { throw "git clone basarisiz!" }
+            git -C $srcDir fetch --depth 1 origin 3b12781 2>$null
+            git -C $srcDir checkout 3b12781
+        }
+        powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\apply_patches.ps1") -CheckOnly *> $null
+        if ($LASTEXITCODE -eq 0) {
+            powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\apply_patches.ps1")
+            if ($LASTEXITCODE -ne 0) { throw "apply_patches.ps1 basarisiz!" }
+        }
+        powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\build.ps1") -Backend $targetBackend
+        if ($LASTEXITCODE -ne 0) { throw "build.ps1 basarisiz!" }
     }
-
-    $srcDir = Join-Path $RepoRoot "third_party\stable-diffusion.cpp"
-    if (-not (Test-Path (Join-Path $srcDir ".git"))) {
-        Write-Host "`n[6/7] stable-diffusion.cpp (3b12781) klonlaniyor..." -ForegroundColor Cyan
-        git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/leejet/stable-diffusion.cpp.git $srcDir
-        if ($LASTEXITCODE -ne 0) { throw "git clone basarisiz!" }
-        git -C $srcDir fetch --depth 1 origin 3b12781 2>$null
-        git -C $srcDir checkout 3b12781
-    }
-
-    # Apply 9 PicoVid patches if not yet applied
-    powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\apply_patches.ps1") -CheckOnly *> $null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "      9 PicoVid yamasi uygulaniyor..." -ForegroundColor Cyan
-        powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\apply_patches.ps1")
-        if ($LASTEXITCODE -ne 0) { throw "apply_patches.ps1 basarisiz!" }
-    }
-
-    Write-Host "      sd-cli.exe ($targetBackend) derleniyor..." -ForegroundColor Cyan
-    powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\build.ps1") -Backend $targetBackend
-    if ($LASTEXITCODE -ne 0) { throw "build.ps1 basarisiz!" }
 } else {
-    Write-Host "`n[4-6/7] Derlenmis sd-cli.exe zaten hazir, derleme atlandi." -ForegroundColor Green
+    Write-Host "`n[4/5] sd-cli.exe zaten hazir." -ForegroundColor Green
 }
 
-# 6. Cinema HD Vulkan Upscaler (43 MB)
+# 5. Cinema HD Vulkan Upscaler (43 MB)
 if (-not $hasRealesrgan) {
-    Write-Host "`n[7/7] Cinema HD Vulkan araci (realesrgan-ncnn-vulkan, 43 MB) indiriliyor..." -ForegroundColor Cyan
+    Write-Host "`n[5/5] Cinema HD Vulkan araci (realesrgan-ncnn-vulkan, 43 MB) indiriliyor..." -ForegroundColor Cyan
     & $pyCmd (Join-Path $RepoRoot "scripts\postprocess.py") --install-only
 }
 
-# 7. Models
+# 6. Models
 if (-not $SkipModels) {
     Write-Host "`n[Modeller] Akilli model indirici baslatiliyor..." -ForegroundColor Cyan
     if ($Profile -eq "auto") {

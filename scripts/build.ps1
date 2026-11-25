@@ -24,21 +24,18 @@ if (Test-Path $vswhere) {
     }
 }
 
-# Fallback: scan common Visual Studio 2022 / 2019 BuildTools & IDE locations for vcvars64.bat
+# Fallback: scan common Visual Studio (2019/2022/18/BuildTools, x64 & x86) locations for vcvars64.bat
 if (-not $vsPath -or -not (Test-Path (Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"))) {
-    $fallbackRoots = @(
-        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools",
-        "C:\Program Files\Microsoft Visual Studio\2022\Community",
-        "C:\Program Files\Microsoft Visual Studio\2022\Professional",
-        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise",
-        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools",
-        "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools",
-        "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community"
-    )
-    foreach ($root in $fallbackRoots) {
-        if (Test-Path (Join-Path $root "VC\Auxiliary\Build\vcvars64.bat")) {
-            $vsPath = $root
-            break
+    foreach ($baseDir in @(
+        "C:\Program Files\Microsoft Visual Studio",
+        "C:\Program Files (x86)\Microsoft Visual Studio"
+    )) {
+        if (Test-Path $baseDir) {
+            $foundVc = Get-ChildItem -Path $baseDir -Filter "vcvars64.bat" -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($foundVc) {
+                $vsPath = (Resolve-Path (Join-Path $foundVc.DirectoryName "..\..\..")).Path
+                break
+            }
         }
     }
 }
