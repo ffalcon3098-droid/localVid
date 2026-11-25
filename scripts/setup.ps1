@@ -124,7 +124,7 @@ function Detect-TargetBackend {
 }
 
 function Try-DownloadPrebuiltBinary {
-    param([string]$DestBinDir)
+    param([string]$DestBinDir, [string]$PyExe = "py")
     New-Item -ItemType Directory -Force -Path $DestBinDir | Out-Null
     $tmpZip = Join-Path $env:TEMP $PrebuiltAsset
     if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
@@ -144,31 +144,50 @@ function Try-DownloadPrebuiltBinary {
         } catch {}
     }
 
-    # Method 2: Git credential token + GitHub Release Asset API (works for private repos using existing git login!)
-    if (-not $downloaded -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    # Method 2: Pure-LF git credential fill (via Python) + curl.exe -L (strips Auth header on Azure 302 redirect!)
+    if (-not $downloaded -and $PyExe) {
+        $pyHelper = @"
+import json, os, pathlib, shutil, subprocess, sys, urllib.request
+repo, tag, asset_name, out_path = sys.argv[1:5]
+tok = os.environ.get("GITHUB_TOKEN", "").strip()
+if not tok:
+    p = subprocess.run(
+        ["git", "credential", "fill"],
+        input=f"protocol=https\nhost=github.com\npath={repo}.git\n\n".encode("ascii"),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    for line in p.stdout.decode("utf-8", "replace").splitlines():
+        if line.startswith("password="):
+            tok = line.split("=", 1)[1].strip()
+            break
+if not tok:
+    sys.exit(2)
+req = urllib.request.Request(
+    f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+    headers={"Authorization": f"Bearer {tok}", "User-Agent": "PicoVid/0.5.3", "Accept": "application/vnd.github+json"},
+)
+rel = json.loads(urllib.request.urlopen(req, timeout=25).read().decode("utf-8"))
+assets = [a for a in rel.get("assets", []) if a.get("name") == asset_name]
+if not assets:
+    sys.exit(3)
+asset_url = assets[0]["url"]
+curl = shutil.which("curl.exe") or shutil.which("curl")
+if curl:
+    r = subprocess.run([curl, "-L", "--fail", "-#", "-H", f"Authorization: Bearer {tok}", "-H", "Accept: application/octet-stream", asset_url, "-o", out_path])
+    sys.exit(r.returncode)
+# Fallback without curl: follow redirect manually without forwarding Authorization header
+class _NoAuthRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return urllib.request.Request(newurl, headers={"User-Agent": "PicoVid/0.5.3"})
+opener = urllib.request.build_opener(_NoAuthRedirect())
+dl_req = urllib.request.Request(asset_url, headers={"Authorization": f"Bearer {tok}", "User-Agent": "PicoVid/0.5.3", "Accept": "application/octet-stream"})
+with opener.open(dl_req, timeout=120) as resp, open(out_path, "wb") as fh:
+    shutil.copyfileobj(resp, fh)
+"@
         try {
-            $credText = "protocol=https`nhost=github.com`n`n" | & git credential fill 2>$null
-            $tokenLine = ($credText | Where-Object { $_ -match "^password=" } | Select-Object -First 1)
-            if ($tokenLine) {
-                $token = $tokenLine.Substring(9).Trim()
-                $headers = @{
-                    "Authorization" = "Bearer $token"
-                    "User-Agent"    = "PicoVid/0.5.1"
-                    "Accept"        = "application/vnd.github+json"
-                }
-                $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$ReleaseRepo/releases/tags/$ReleaseTag" -Headers $headers -TimeoutSec 20
-                $asset = $rel.assets | Where-Object { $_.name -eq $PrebuiltAsset } | Select-Object -First 1
-                if ($asset) {
-                    $dlHeaders = @{
-                        "Authorization" = "Bearer $token"
-                        "User-Agent"    = "PicoVid/0.5.1"
-                        "Accept"        = "application/octet-stream"
-                    }
-                    Invoke-WebRequest -Uri $asset.url -Headers $dlHeaders -OutFile $tmpZip -TimeoutSec 120
-                    if ((Test-Path $tmpZip) -and ((Get-Item $tmpZip).Length -gt 1000000)) {
-                        $downloaded = $true
-                    }
-                }
+            & $PyExe -c $pyHelper $ReleaseRepo $ReleaseTag $PrebuiltAsset $tmpZip
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $tmpZip) -and ((Get-Item $tmpZip).Length -gt 1000000)) {
+                $downloaded = $true
             }
         } catch {}
     }
@@ -186,6 +205,7 @@ function Try-DownloadPrebuiltBinary {
 
     if (-not $downloaded) {
         Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+        Write-Host "  [UYARI] Hazir binary indirilemedi (private repo ise 'git pull' kimligi veya 'gh auth login' gerekir)." -ForegroundColor Yellow
         return $false
     }
 
@@ -255,7 +275,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt basarisiz oldu
 if (-not $hasBin) {
     $gotPrebuilt = $false
     if (-not $BuildFromSource -and $targetBackend -eq "vulkan") {
-        $gotPrebuilt = Try-DownloadPrebuiltBinary -DestBinDir (Join-Path $RepoRoot "build\sdcpp-vulkan\bin")
+        $gotPrebuilt = Try-DownloadPrebuiltBinary -DestBinDir (Join-Path $RepoRoot "build\sdcpp-vulkan\bin") -PyExe $pyCmd
     }
 
     if (-not $gotPrebuilt) {
