@@ -91,7 +91,15 @@ All patches are **default OFF** (enabled strictly via environment variables) and
 
 ## Quick Start (Windows)
 
-### 1. Clone `stable-diffusion.cpp`, Apply Patches & Build
+### 0. One-Click Zero-Prerequisite Setup (Recommended on a Fresh PC)
+
+```powershell
+# Automatically installs missing Git / Python / VS 2022 C++ Tools / CUDA or Vulkan SDK,
+# clones & patches stable-diffusion.cpp, compiles sd-cli.exe, and downloads recommended models!
+.\setup.cmd
+```
+
+### 1. Manual Clone, Apply Patches & Build
 
 ```powershell
 # Clone pinned base

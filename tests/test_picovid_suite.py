@@ -51,6 +51,44 @@ class TestRegistryAndDownloader(unittest.TestCase):
         k32, _ = download_models.recommend_bundle(download_models.detect_host_summary("vulkan-6gb-32gb"))
         self.assertEqual(k32, "3")  # full Q4_K_M studio
 
+    def test_python_fallback_downloader_local_http(self) -> None:
+        from http.server import BaseHTTPRequestHandler
+        payload = b"PicoVidModelData" * 1024
+
+        class _RangeHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                return
+            def do_GET(self):
+                rng = self.headers.get("Range")
+                if rng and rng.startswith("bytes="):
+                    start = int(rng.split("=")[1].split("-")[0])
+                    part = payload[start:]
+                    self.send_response(206)
+                    self.send_header("Content-Length", str(len(part)))
+                    self.end_headers()
+                    self.wfile.write(part)
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), _RangeHandler)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="picovid_dl_") as td:
+                dest = pathlib.Path(td) / "model.bin"
+                dest.write_bytes(payload[:512])  # test resume from 512 bytes
+                ok = download_models._download_with_python_urllib(
+                    f"http://127.0.0.1:{srv.server_address[1]}/model.bin", dest, len(payload)
+                )
+                self.assertTrue(ok)
+                self.assertEqual(dest.read_bytes(), payload)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
 
 class TestProfileAndTokenMath(unittest.TestCase):
     def test_token_math_5b_vs_14b(self) -> None:

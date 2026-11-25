@@ -72,7 +72,15 @@ Stok [`leejet/stable-diffusion.cpp`](https://github.com/leejet/stable-diffusion.
 
 ## Hızlı Kurulum ve Çalıştırma (Windows)
 
-### 1. Kaynak Çekme, Yama Uygulama ve Derleme
+### 0. Sıfırdan Tek Tıkla Otomatik Kurulum (Temiz Bilgisayarda Önerilen)
+
+```powershell
+# Eksik Git / Python / VS 2022 C++ Build Tools / CUDA veya Vulkan SDK'yi otomatik kurar,
+# 9 yamayı uygular, sd-cli.exe'yi derler, Cinema HD aracını ve donanıma uygun modelleri indirir!
+.\setup.cmd
+```
+
+### 1. Manuel Kaynak Çekme, Yama Uygulama ve Derleme
 
 ```powershell
 git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/leejet/stable-diffusion.cpp.git third_party/stable-diffusion.cpp

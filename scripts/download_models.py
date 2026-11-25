@@ -21,6 +21,9 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from typing import Any
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
@@ -78,34 +81,113 @@ def check_file(item: dict[str, Any]) -> tuple[bool, str, int]:
     return False, f"PARTIAL/MISMATCH ({format_gb(sz)} / {format_gb(exp)})", remaining
 
 
+def _download_with_python_urllib(url: str, dest: pathlib.Path, expected_bytes: int) -> bool:
+    """Pure-Python resumable streaming downloader fallback (works even if curl is missing/broken)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(1, 5):
+        existing = dest.stat().st_size if dest.exists() else 0
+        if expected_bytes > 0 and existing > expected_bytes:
+            dest.unlink(missing_ok=True)
+            existing = 0
+
+        headers = {"User-Agent": "PicoVid/0.5 (+https://github.com/ffalcon3098-droid/localVid)"}
+        mode = "wb"
+        if existing > 0:
+            headers["Range"] = f"bytes={existing}-"
+            mode = "ab"
+
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                status = getattr(resp, "status", 200)
+                if existing > 0 and status == 200:
+                    # Server ignored Range header; restart cleanly from 0
+                    existing = 0
+                    mode = "wb"
+                cl = int(resp.headers.get("Content-Length", "0") or "0")
+                total = (existing + cl) if (cl > 0 and status == 206) else (cl or expected_bytes)
+
+                downloaded = existing
+                t0 = time.monotonic()
+                t_last = t0
+                chunk_size = 4 * 1024 * 1024  # 4 MiB chunks
+                with dest.open(mode) as fh:
+                    while True:
+                        buf = resp.read(chunk_size)
+                        if not buf:
+                            break
+                        fh.write(buf)
+                        downloaded += len(buf)
+                        now = time.monotonic()
+                        if now - t_last >= 0.4:
+                            el = max(0.01, now - t0)
+                            spd = (downloaded - existing) / el / (1024 * 1024)
+                            pct = (downloaded / total * 100.0) if total > 0 else 0.0
+                            print(
+                                f"\r         [Python] {pct:5.1f}%  {format_gb(downloaded)} / {format_gb(total)}  ({spd:.1f} MB/s)   ",
+                                end="",
+                                flush=True,
+                            )
+                            t_last = now
+                print()
+                if expected_bytes <= 0 or dest.stat().st_size == expected_bytes:
+                    return True
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416:
+                dest.unlink(missing_ok=True)
+                continue
+            print(f"\n  [WARN] Python indirme denemesi {attempt}/4 HTTP {exc.code}: {exc.reason}", file=sys.stderr)
+        except Exception as exc:
+            print(f"\n  [WARN] Python indirme denemesi {attempt}/4 hata: {exc}", file=sys.stderr)
+        time.sleep(min(10, attempt * 2))
+    return False
+
+
 def download_file(item: dict[str, Any]) -> bool:
     p = resolve_path(item["path"])
     p.parent.mkdir(parents=True, exist_ok=True)
+    exp = int(item.get("expected_bytes", 0))
     ok, msg, _ = check_file(item)
     if ok:
         print(f"  [SKIP] {item['path']} — {msg}")
         return True
 
-    curl = shutil.which("curl.exe") or shutil.which("curl")
-    if not curl:
-        print("HATA: Devam ettirilebilir indirme için curl gerekli.", file=sys.stderr)
-        return False
+    # Delete oversize/corrupt partial (e.g. HTML error page) before retrying
+    if p.exists() and exp > 0 and p.stat().st_size > exp:
+        p.unlink(missing_ok=True)
 
     print(f"  [GET ] {item['desc']}")
     print(f"         -> {item['path']}")
-    cmd = [
-        curl, "-L", "-C", "-",
-        "--retry", "5", "--retry-delay", "3",
-        "--speed-limit", "50000", "--speed-time", "25",
-        "-#", item["url"], "-o", str(p),
-    ]
-    proc = subprocess.run(cmd)
-    if proc.returncode != 0:
-        print(f"  [FAIL] curl çıkış kodu: {proc.returncode}", file=sys.stderr)
-        return False
+
+    curl = shutil.which("curl.exe") or shutil.which("curl")
+    curl_ok = False
+    if curl:
+        has_partial = p.exists() and p.stat().st_size > 0
+        for try_resume in ([True, False] if has_partial else [False]):
+            cmd = [
+                curl, "-L", "--fail",
+                "--connect-timeout", "30",
+                "--retry", "6", "--retry-delay", "4",
+                "--speed-limit", "10000", "--speed-time", "45",
+                "-#",
+            ]
+            if try_resume:
+                cmd += ["-C", "-"]
+            else:
+                p.unlink(missing_ok=True)
+            cmd += [item["url"], "-o", str(p)]
+            proc = subprocess.run(cmd)
+            if proc.returncode == 0:
+                curl_ok = True
+                break
+            print(f"  [WARN] curl çıkış kodu {proc.returncode} (resume={try_resume})", file=sys.stderr)
+
+    if not curl_ok:
+        print("  [INFO] Yerleşik Python indiricisine geçiliyor (devam ettirilebilir)...")
+        _download_with_python_urllib(item["url"], p, exp)
 
     ok, msg, _ = check_file(item)
-    print(f"  [{'OK  ' if ok else 'WARN'}] {item['path']} — {msg}")
+    print(f"  [{'OK  ' if ok else 'FAIL'}] {item['path']} — {msg}")
     return ok
 
 
