@@ -31,3 +31,5 @@ benchmarks/samples/
 # Python cache
 __pycache__/
 *.pyc
+
+engine/

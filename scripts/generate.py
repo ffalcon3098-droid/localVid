@@ -136,7 +136,15 @@ def get_missing_mode_files(
     req_ids: list[str] = []
     if mode in ("t2i", "studio"):
         req_ids += ["z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae"]
-    if engine == "5b" and mode in ("t2v", "i2v", "studio"):
+    if engine == "ltx23" and mode in ("t2v", "i2v", "studio"):
+        req_ids += [
+            "ltx23_distilled_q4_k_m",
+            "gemma3_12b_qat_iq4_xs",
+            "ltx23_distilled_connectors",
+            "ltx23_distilled_video_vae",
+            "ltx23_distilled_audio_vae",
+        ]
+    elif engine == "5b" and mode in ("t2v", "i2v", "studio"):
         req_ids += ["wan22_ti2v_5b_turbo_q4", "umt5_xxl_q4_k_m", "wan22_vae"]
         if fast_preview:
             req_ids.append("taew2_2")
@@ -542,6 +550,49 @@ def resolve_project_path(p: pathlib.Path) -> pathlib.Path:
     return p
 
 
+LTX23_DISTILLED_SIGMAS = "1.0,0.99375,0.9875,0.98125,0.975,0.909375,0.725,0.421875,0.0"
+
+
+def resolve_ltx23_sd_cli(backend: str, explicit: pathlib.Path | None) -> pathlib.Path:
+    if explicit is not None:
+        return resolve_project_path(explicit)
+    candidates = [
+        pathlib.Path("engine/sd-vulkan-ltx2/sd-cli.exe"),
+        pathlib.Path("engine/sd-vulkan-ltx2/sd-cli"),
+        pathlib.Path(f"engine/sd-{backend}-ltx2/sd-cli.exe"),
+    ]
+    for c in candidates:
+        resolved = resolve_project_path(c)
+        if resolved.exists():
+            return resolved
+    return resolve_sd_cli(backend, None)
+
+
+def convert_webm_to_mp4(webm_path: pathlib.Path, mp4_path: pathlib.Path) -> str:
+    """Convert LTX-2.3 .webm (VP8 + PCM 48kHz stereo audio) to universal H.264 + AAC MP4."""
+    ffmpeg, ff_label = resolve_ffmpeg()
+    if ffmpeg:
+        cmd = [
+            ffmpeg, "-y", "-i", str(webm_path),
+            "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            str(mp4_path),
+        ]
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if p.returncode == 0 and mp4_path.exists():
+            return ff_label + "_aac"
+    return "webm_only"
+
+
+def snap_ltx23_frames(frames: int) -> int:
+    """Snap frame count to LTX-2.3 8k+1 rule (17, 25, 33, 41, 49, ..., 121)."""
+    if frames <= 9:
+        return 9
+    rem = (frames - 1) % 8
+    return frames if rem == 0 else frames + (8 - rem)
+
+
 def resolve_sd_cli(backend: str, explicit: pathlib.Path | None) -> pathlib.Path:
     if explicit is not None:
         return resolve_project_path(explicit)
@@ -760,9 +811,10 @@ def run_t2i_first_frame(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="PicoVid v0.3.0: Wan 2.2 TI2V-5B (Fast 5s) + 14B T2V/I2V + Z-Image-Turbo + Cinema HD (4-6 GB VRAM, CUDA + Vulkan)"
+        description="PicoVid v0.5.0: LTX-2.3 22B Distilled (Audio+Video T2V/I2V) + Z-Image-Turbo (4-6 GB VRAM, Vulkan + CUDA)"
     )
-    parser.add_argument("--engine", choices=["5b", "14b"], default="14b", help="Video engine: 5b (Wan 2.2 TI2V-5B Turbo, fast 5s 24fps) or 14b (Wan 2.2 14B)")
+    parser.add_argument("--engine", choices=["ltx23", "5b", "14b"], default="ltx23", help="Video engine: ltx23 (LTX-2.3 22B Distilled Audio+Video, default), 5b, or 14b")
+    parser.add_argument("--no-audio", action="store_true", help="LTX-2.3 only: disable stereo audio generation")
     parser.add_argument("--mode", choices=["t2v", "i2v", "t2i", "studio"], default=None, help="Generation mode (default: t2v, or i2v if --init-img given)")
     parser.add_argument("-p", "--prompt", default=None, help="Text prompt (omit to open interactive wizard)")
     parser.add_argument("-i", "--init-img", type=pathlib.Path, default=None, help="Input first-frame image for I2V")
@@ -853,12 +905,23 @@ def main() -> int:
             args.prompt = "Gentle cinematic camera motion, natural realistic movement, smooth lighting, 35mm film"
 
     engine: str = args.engine
+    is_ltx23 = engine == "ltx23"
     is_5b = engine == "5b"
     if args.frames is None:
-        args.frames = 81 if is_5b else 33
+        args.frames = 25 if is_ltx23 else (81 if is_5b else 33)
     if args.fps is None:
-        args.fps = 16
-    if is_5b:
+        args.fps = 24 if is_ltx23 else 16
+    if is_ltx23:
+        w32 = max(256, (args.width // 32) * 32)
+        h32 = max(256, (args.height // 32) * 32)
+        if (w32, h32) != (args.width, args.height):
+            print(f"[PicoVid] LTX-2.3 için çözünürlük 32'nin katına yuvarlandı: {args.width}x{args.height} -> {w32}x{h32}", file=sys.stderr)
+            args.width, args.height = w32, h32
+        f_ltx = snap_ltx23_frames(args.frames)
+        if f_ltx != args.frames:
+            print(f"[PicoVid] LTX-2.3 için kare sayısı 8k+1 kuralına yuvarlandı: {args.frames} -> {f_ltx}", file=sys.stderr)
+            args.frames = f_ltx
+    elif is_5b:
         # Wan 2.2 TI2V-5B requires 32-aligned spatial dimensions (16x VAE * 2x patch)
         w32 = max(64, (args.width // 32) * 32)
         h32 = max(64, (args.height // 32) * 32)
@@ -1244,6 +1307,131 @@ def main() -> int:
         else:
             args.init_img = first_frame_png
             args.prompt = args.motion_prompt or studio_prompt
+
+    # LTX-2.3 22B Distilled v1.1 Pipeline (Audio + Video · T2V / I2V / FLF2V / Studio Stage 2)
+    if is_ltx23:
+        ltx_cli = resolve_ltx23_sd_cli(hw["backend"], args.sd_cli)
+        ltx_dit = resolve_project_path(args.diffusion_model) if args.diffusion_model else reg_file_path(reg, "ltx23_distilled_q4_k_m", "models/diffusion_models/ltx-2.3-22b-distilled-1.1-Q4_K_M.gguf")
+        ltx_llm = reg_file_path(reg, "gemma3_12b_qat_iq4_xs", "models/text_encoders/gemma-3-12b-it-qat-IQ4_XS.gguf")
+        ltx_conn = reg_file_path(reg, "ltx23_distilled_connectors", "models/text_encoders/ltx-2.3-22b-distilled_embeddings_connectors.safetensors")
+        ltx_vae = resolve_project_path(args.vae) if args.vae else reg_file_path(reg, "ltx23_distilled_video_vae", "models/vae/ltx-2.3-22b-distilled_video_vae.safetensors")
+        ltx_aud = reg_file_path(reg, "ltx23_distilled_audio_vae", "models/vae/ltx-2.3-22b-distilled_audio_vae.safetensors")
+        use_audio = (not args.no_audio) and (ltx_aud.exists() or args.dry_run)
+
+        out_mp4 = args.output.resolve()
+        if not args.dry_run:
+            out_mp4.parent.mkdir(parents=True, exist_ok=True)
+        raw_webm = out_mp4.with_suffix(".webm")
+        log_path = out_mp4.with_suffix(".log")
+        is_i2v_ltx = mode in ("i2v", "studio")
+        ltx_sampler = args.sampler or "euler"
+
+        ltx_cmd: list[str] = [
+            str(ltx_cli),
+            "-M", "vid_gen",
+            "--diffusion-model", str(ltx_dit),
+            "--llm", str(ltx_llm),
+            "--embeddings-connectors", str(ltx_conn),
+            "--vae", str(ltx_vae),
+        ]
+        if use_audio:
+            ltx_cmd += ["--audio-vae", str(ltx_aud)]
+        if is_i2v_ltx and args.init_img is not None:
+            ltx_cmd += ["-i", str(args.init_img.resolve())]
+        if is_i2v_ltx and args.end_img is not None:
+            ltx_cmd += ["--end-img", str(args.end_img.resolve())]
+        ltx_cmd += [
+            "-p", args.prompt,
+            "-W", str(args.width),
+            "-H", str(args.height),
+            "--video-frames", str(args.frames),
+            "--fps", str(args.fps),
+            "--cfg-scale", str(args.cfg_scale),
+            "--sampling-method", ltx_sampler,
+            "--sigmas", LTX23_DISTILLED_SIGMAS,
+            "--seed", str(args.seed),
+            "--offload-to-cpu",
+            "--mmap",
+            "--max-vram", "0",
+            "--disable-prefetch",
+            "--vae-tiling",
+            "--temporal-tiling",
+            "-o", str(raw_webm),
+        ]
+
+        ltx_plan: dict[str, Any] = {
+            "engine": "ltx23",
+            "mode": mode,
+            "hardware": hw,
+            "resolution": f"{args.width}x{args.height}",
+            "frames": args.frames,
+            "fps": args.fps,
+            "audio_enabled": use_audio,
+            "sigmas": LTX23_DISTILLED_SIGMAS,
+            "cmd": ltx_cmd,
+            "output_mp4": str(out_mp4),
+        }
+        if studio_t2i_plan is not None:
+            ltx_plan["studio_t2i"] = {"env": studio_t2i_plan["env"], "cmd": studio_t2i_plan["cmd"], "output_png": studio_t2i_plan["output_png"]}
+        if args.dry_run:
+            print(json.dumps(ltx_plan, indent=2, ensure_ascii=False))
+            return 0
+
+        req_ltx = [("sd-cli-ltx2", ltx_cli), ("diffusion-model", ltx_dit), ("llm", ltx_llm), ("embeddings-connectors", ltx_conn), ("vae", ltx_vae)]
+        if use_audio:
+            req_ltx.append(("audio-vae", ltx_aud))
+        if is_i2v_ltx and (args.init_img is None or not args.init_img.exists()):
+            print(f"HATA: LTX-2.3 I2V için geçerli --init-img gerekli: {args.init_img}", file=sys.stderr)
+            return 2
+        for lbl, pth in req_ltx:
+            if not pth.exists():
+                print(f"HATA: LTX-2.3 için eksik {lbl}: {pth}\nİndirmek için: py scripts/download_models.py --profile ltx23", file=sys.stderr)
+                return 2
+
+        print(
+            f"[PicoVid LTX-2.3] Başlıyor: {mode.upper()} · {args.width}x{args.height} · {args.frames}f @ {args.fps}fps · "
+            f"{'Ses + Video' if use_audio else 'Sessiz Video'} · 8 adım (Distilled 1.1)",
+            flush=True,
+        )
+        t0_ltx = time.monotonic()
+        with log_path.open("w", encoding="utf-8", errors="replace") as lf:
+            lf.write("=== PicoVid LTX-2.3 Distilled v1.1 Run Log ===\n")
+            lf.write(json.dumps(ltx_plan, indent=2, ensure_ascii=False) + "\n\n")
+            lf.flush()
+            proc_ltx = subprocess.Popen(
+                ltx_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=0,
+            )
+            assert proc_ltx.stdout is not None
+            for line in ui_console.iter_stream_lines(proc_ltx.stdout):
+                lf.write(line + "\n")
+                lf.flush()
+                if echo_raw or any(k in line for k in ("/8 -", "sampling", "vae decode", "audio vae", "save result", "[E]")):
+                    print(line, flush=True)
+            rc_ltx = proc_ltx.wait()
+
+        if rc_ltx != 0 or not raw_webm.exists():
+            print(f"HATA: LTX-2.3 üretimi başarısız (exit={rc_ltx}). Detay: {log_path}", file=sys.stderr)
+            return rc_ltx or 1
+
+        if out_mp4.suffix.lower() == ".webm":
+            final_ltx = raw_webm
+            enc_ltx = "webm_native"
+        else:
+            enc_ltx = convert_webm_to_mp4(raw_webm, out_mp4)
+            if enc_ltx != "webm_only" and out_mp4.exists():
+                raw_webm.unlink(missing_ok=True)
+                final_ltx = out_mp4
+            else:
+                final_ltx = raw_webm
+        el_ltx = time.monotonic() - t0_ltx
+        print(f"[PicoVid LTX-2.3] TAMAMLANDI ({el_ltx:.1f}s · {enc_ltx}): {final_ltx} [{ui_console.format_file_size(final_ltx)}]", flush=True)
+        return 0
 
     # Video Stage (T2V or I2V / Studio Stage 2 — supports both Wan 2.2 TI2V-5B and 14B)
     is_i2v = mode in ("i2v", "studio")

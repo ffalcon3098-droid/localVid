@@ -1,6 +1,41 @@
 {
-  "schema_version": "0.3.0",
+  "schema_version": "0.5.0",
   "files": {
+    "ltx23_distilled_q4_k_m": {
+      "path": "models/diffusion_models/ltx-2.3-22b-distilled-1.1-Q4_K_M.gguf",
+      "expected_bytes": 14194441248,
+      "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/main/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q4_K_M.gguf",
+      "license": "ltx-community",
+      "desc": "LTX-2.3 22B Distilled v1.1 Audio+Video DiT (8-step, T2V+I2V+FLF2V, Q4_K_M, 13.22 GiB)"
+    },
+    "gemma3_12b_qat_iq4_xs": {
+      "path": "models/text_encoders/gemma-3-12b-it-qat-IQ4_XS.gguf",
+      "expected_bytes": 6550964608,
+      "url": "https://huggingface.co/unsloth/gemma-3-12b-it-qat-GGUF/resolve/main/gemma-3-12b-it-qat-IQ4_XS.gguf",
+      "license": "gemma",
+      "desc": "Gemma 3 12B IT QAT Text Encoder for LTX-2.3 (IQ4_XS, 6.10 GiB)"
+    },
+    "ltx23_distilled_connectors": {
+      "path": "models/text_encoders/ltx-2.3-22b-distilled_embeddings_connectors.safetensors",
+      "expected_bytes": 2312144712,
+      "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/main/text_encoders/ltx-2.3-22b-distilled_embeddings_connectors.safetensors",
+      "license": "ltx-community",
+      "desc": "LTX-2.3 Distilled Embeddings Connectors (2.15 GiB)"
+    },
+    "ltx23_distilled_video_vae": {
+      "path": "models/vae/ltx-2.3-22b-distilled_video_vae.safetensors",
+      "expected_bytes": 1452256522,
+      "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/main/vae/ltx-2.3-22b-distilled_video_vae.safetensors",
+      "license": "ltx-community",
+      "desc": "LTX-2.3 Distilled Video VAE (1.35 GiB)"
+    },
+    "ltx23_distilled_audio_vae": {
+      "path": "models/vae/ltx-2.3-22b-distilled_audio_vae.safetensors",
+      "expected_bytes": 364853140,
+      "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/main/vae/ltx-2.3-22b-distilled_audio_vae.safetensors",
+      "license": "ltx-community",
+      "desc": "LTX-2.3 Distilled Audio VAE 48kHz Stereo (0.34 GiB)"
+    },
     "wan22_ti2v_5b_turbo_q4": {
       "path": "models/diffusion_models/Wan2_2-TI2V-5B-Turbo-Q4_K_M.gguf",
       "expected_bytes": 3437927136,
@@ -101,6 +136,24 @@
     }
   },
   "pipelines": {
+    "ltx23": {
+      "label": "LTX-2.3 22B Distilled v1.1 (8-step Audio+Video T2V/I2V/FLF2V)",
+      "diffusion_model": "ltx23_distilled_q4_k_m",
+      "llm": "gemma3_12b_qat_iq4_xs",
+      "embeddings_connectors": "ltx23_distilled_connectors",
+      "vae": "ltx23_distilled_video_vae",
+      "audio_vae": "ltx23_distilled_audio_vae",
+      "defaults": {
+        "steps": 8,
+        "cfg_scale": 1.0,
+        "sampler": "euler",
+        "fps": 24,
+        "width": 768,
+        "height": 448,
+        "frames": 25,
+        "sigmas": "1.0,0.99375,0.9875,0.98125,0.975,0.909375,0.725,0.421875,0.0"
+      }
+    },
     "ti2v_5b": {
       "label": "Wan 2.2 TI2V-5B Turbo (4-step Fast 5s T2V + I2V)",
       "diffusion_model": "wan22_ti2v_5b_turbo_q4",
@@ -190,6 +243,16 @@
     }
   },
   "download_profiles": {
+    "ltx23": {
+      "desc": "LTX-2.3 22B Distilled v1.1 Audio+Video (T2V+I2V, 8-step, 23.16 GiB)",
+      "required": ["ltx23_distilled_q4_k_m", "gemma3_12b_qat_iq4_xs", "ltx23_distilled_connectors", "ltx23_distilled_video_vae", "ltx23_distilled_audio_vae"],
+      "optional": []
+    },
+    "ltx23-studio": {
+      "desc": "LTX-2.3 Studio: Z-Image-Turbo (T2I) + LTX-2.3 22B Distilled Audio+Video (I2V)",
+      "required": ["z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae", "ltx23_distilled_q4_k_m", "gemma3_12b_qat_iq4_xs", "ltx23_distilled_connectors", "ltx23_distilled_video_vae", "ltx23_distilled_audio_vae"],
+      "optional": []
+    },
     "fast-5b": {
       "desc": "Wan 2.2 TI2V-5B Turbo 4-Step T2V+I2V (5-sec fast videos, 7.92 GiB total / 4.51 GiB add-on)",
       "required": ["wan22_ti2v_5b_turbo_q4", "umt5_xxl_q4_k_m", "wan22_vae"],
