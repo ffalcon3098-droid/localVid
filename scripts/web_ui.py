@@ -53,7 +53,7 @@ def get_models_status() -> dict[str, Any]:
     files_map = reg.get("files", {})
     profiles = reg.get("download_profiles", {})
     out: dict[str, Any] = {}
-    for pname in ("fast-5b", "t2i", "t2v", "i2v", "studio"):
+    for pname in ("ltx23", "t2i", "ltx23-studio", "fast-5b", "t2v", "i2v", "studio"):
         if pname not in profiles:
             continue
         req = profiles[pname]["required"]
@@ -187,8 +187,16 @@ class StudioState:
                 self.stage = f"{self._seg_prefix}2/4 DiT Video Üretimi"
                 self.progress_pct = max(self.progress_pct, 20.0)
                 self.detail = clean
+            elif "sampling completed" in clean:
+                self.stage = f"{self._seg_prefix}3/4 Video & Ses VAE Decode"
+                self.progress_pct = max(self.progress_pct, 70.0)
+                self.detail = clean
+            elif "ltx audio vae decode" in clean:
+                self.stage = f"{self._seg_prefix}4/4 Ses + H.264 MP4 Paketleme"
+                self.progress_pct = max(self.progress_pct, 90.0)
+                self.detail = clean
             elif "VAE Decode" in clean or "SD_VIDEO_LATENT_LOAD" in clean:
-                self.stage = f"{self._seg_prefix}3/4 Wan VAE Decode"
+                self.stage = f"{self._seg_prefix}3/4 Video VAE Decode"
                 self.progress_pct = max(self.progress_pct, 58.0)
                 self.detail = clean
             elif "Sinema HD" in clean or "birleştiriliyor" in clean or "MP4 Paketleme" in clean:
@@ -397,7 +405,7 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent)}
 <header>
   <div class="brand">
     <div class="logo">PicoVid Studio</div>
-    <span class="badge">v0.4.1 · 4-6 GB VRAM Engine</span>
+    <span class="badge">v0.5.0 · LTX-2.3 22B Ses+Video</span>
     <span id="gpuName" style="font-size:12px;color:var(--muted)">GPU okunuyor...</span>
     <span id="modelBadges" style="display:flex;gap:6px;flex-wrap:wrap"></span>
   </div>
@@ -438,29 +446,30 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent)}
       <div>
         <label>Video Motoru</label>
         <select id="engine" onchange="onEngineChange()">
-          <option value="5b" selected>Wan 2.2 TI2V-5B Turbo (Hızlı 5-15sn)</option>
-          <option value="14b">Wan 2.2 14B (Ultra Detay 1-6sn)</option>
+          <option value="ltx23" selected>LTX-2.3 22B Distilled (Ses + Video ★)</option>
+          <option value="5b">Wan 2.2 TI2V-5B (Eski)</option>
+          <option value="14b">Wan 2.2 14B (Eski)</option>
         </select>
       </div>
       <div>
         <label>Çözünürlük</label>
         <select id="res">
-          <option value="640x384" selected>640×384 (En Hızlı · HD→1280×768)</option>
-          <option value="832x480">832×480 (Doğal Fotogerçekçi 480p)</option>
-          <option value="480x320">480×320 (Ultra Hızlı Taslak)</option>
+          <option value="640x384" selected>640×384 (Sinema 5sn · HD→1280×768)</option>
+          <option value="768x448">768×448 (Yüksek Detay 16:9)</option>
+          <option value="576x320">576×320 (Hızlı 5sn)</option>
+          <option value="832x480">832×480 (Doğal 480p / Z-Image)</option>
         </select>
       </div>
     </div>
 
     <div class="row2">
       <div>
-        <label>Süre / Bölüm Zinciri</label>
+        <label>Süre / Kare Sayısı</label>
         <select id="durationPreset">
-          <option value="81:1:16" selected>5.1 sn (81f · ~4.8 dk) ★</option>
-          <option value="49:1:16">3.1 sn (49f · ~3.0 dk)</option>
-          <option value="81:2:16">10.1 sn (2×81f Zincir · ~9.6 dk)</option>
-          <option value="81:3:16">15.1 sn (3×81f Zincir · ~14.4 dk)</option>
-          <option value="121:1:24">5.0 sn (121f @24fps native)</option>
+          <option value="81:1:16" selected>5.1 sn (81f @16fps · Ses+Video) ★</option>
+          <option value="49:1:16">3.1 sn (49f @16fps · Ses+Video)</option>
+          <option value="25:1:24">1.0 sn (25f @24fps · Hızlı Test)</option>
+          <option value="121:1:24">5.0 sn (121f @24fps · Maksimum)</option>
         </select>
       </div>
       <div>
@@ -529,7 +538,13 @@ function setMode(m) {
 function onEngineChange() {
   const eng = document.getElementById('engine').value;
   const sel = document.getElementById('durationPreset');
-  if (eng === '5b') {
+  if (eng === 'ltx23') {
+    sel.innerHTML = `
+      <option value="81:1:16" selected>5.1 sn (81f @16fps · Ses+Video) ★</option>
+      <option value="49:1:16">3.1 sn (49f @16fps · Ses+Video)</option>
+      <option value="25:1:24">1.0 sn (25f @24fps · Hızlı Test)</option>
+      <option value="121:1:24">5.0 sn (121f @24fps · Maksimum)</option>`;
+  } else if (eng === '5b') {
     sel.innerHTML = `
       <option value="81:1:16" selected>5.1 sn (81f · ~4.8 dk) ★</option>
       <option value="49:1:16">3.1 sn (49f · ~3.0 dk)</option>
@@ -624,7 +639,7 @@ async function loadModelsStatus() {
   try {
     const r = await fetch('/api/models');
     const m = await r.json();
-    const defs = [['fast-5b','5B Turbo'], ['t2i','T2I'], ['t2v','14B T2V'], ['i2v','14B I2V']];
+    const defs = [['ltx23','LTX-2.3 22B'], ['t2i','Z-Image T2I']];
     document.getElementById('modelBadges').innerHTML = defs.map(([k, lbl]) => {
       const info = m[k]; if (!info) return '';
       if (info.ready) return `<span class="mbadge ok" title="${lbl} kurulu">${lbl} ✓</span>`;
@@ -869,12 +884,12 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 return
 
             if path == "/api/generate":
-                engine = str(body.get("engine", "5b"))
+                engine = str(body.get("engine", "ltx23"))
                 mode = str(body.get("mode", "t2v"))
                 prompt = str(body.get("prompt") or ui_console.DEFAULT_SAMPLE_PROMPT).strip()
                 w = int(body.get("width", 640))
                 h = int(body.get("height", 384))
-                frames = int(body.get("frames", 81 if engine == "5b" else 33))
+                frames = int(body.get("frames", 81 if engine in ("ltx23", "5b") else 33))
                 segments = max(1, min(6, int(body.get("segments", 1))))
                 fps = int(body.get("fps", 16))
                 seed = int(body["seed"]) if body.get("seed") is not None else random.randint(1, 2_147_483_647)

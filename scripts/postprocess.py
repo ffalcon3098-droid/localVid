@@ -292,6 +292,82 @@ def stitch_video_segments(
         shutil.rmtree(work, ignore_errors=True)
 
 
+def has_audio_stream(video_path: pathlib.Path, ff: str | None = None) -> bool:
+    """Detect whether an input video container has an audio track."""
+    exe = ff or resolve_ffmpeg()
+    if not exe or not video_path.exists():
+        return False
+    try:
+        p = subprocess.run(
+            [exe, "-i", str(video_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        return "Audio:" in (p.stderr or "")
+    except Exception:
+        return False
+
+
+def concat_av_clips(
+    clip_paths: list[pathlib.Path],
+    output_mp4: pathlib.Path,
+    crf: int = 15,
+) -> dict[str, object]:
+    """Concatenate multiple H.264+AAC MP4 clips cleanly preserving both video and 48kHz stereo audio."""
+    ff = resolve_ffmpeg()
+    if not ff:
+        raise RuntimeError("ffmpeg / imageio-ffmpeg bulunamadı.")
+    valid = [p.resolve() for p in clip_paths if p.exists()]
+    if not valid:
+        raise ValueError("Birleştirilecek klip bulunamadı.")
+
+    output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    cmd: list[str] = [ff, "-y"]
+    all_have_audio = all(has_audio_stream(p, ff) for p in valid)
+    for p in valid:
+        cmd += ["-i", str(p)]
+
+    n = len(valid)
+    if all_have_audio:
+        parts = []
+        for i in range(n):
+            parts.append(f"[{i}:v:0]setsar=1[v{i}];")
+            parts.append(f"[{i}:a:0]aformat=sample_rates=48000:channel_layouts=stereo[a{i}];")
+        concat_in = "".join(f"[v{i}][a{i}]" for i in range(n))
+        fc = "".join(parts) + f"{concat_in}concat=n={n}:v=1:a=1[vout][aout]"
+        cmd += [
+            "-filter_complex", fc,
+            "-map", "[vout]", "-map", "[aout]",
+            "-c:v", "libx264", "-profile:v", "high", "-crf", str(crf), "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            str(output_mp4),
+        ]
+    else:
+        concat_in = "".join(f"[{i}:v:0]" for i in range(n))
+        fc = f"{concat_in}concat=n={n}:v=1:a=0[vout]"
+        cmd += [
+            "-filter_complex", fc,
+            "-map", "[vout]",
+            "-c:v", "libx264", "-profile:v", "high", "-crf", str(crf), "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            str(output_mp4),
+        ]
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    if p.returncode != 0 or not output_mp4.exists():
+        raise RuntimeError(f"ffmpeg showreel birleştirme başarısız: {p.stderr[-400:]}")
+    return {
+        "output_mp4": str(output_mp4),
+        "clips": n,
+        "audio_preserved": all_have_audio,
+        "size_mb": round(output_mp4.stat().st_size / (1024 * 1024), 2),
+    }
+
+
 def extract_video_frames(video_path: pathlib.Path, out_dir: pathlib.Path) -> tuple[int, float, int, int]:
     """Extract lossless PNG frames from AVI/MP4 and return (count, fps, width, height)."""
     import cv2
@@ -421,11 +497,15 @@ def enhance_video(
             shutil.copyfile(p, seq_dir / f"{i:08d}.png")
 
         output_mp4.parent.mkdir(parents=True, exist_ok=True)
+        keep_audio = has_audio_stream(input_video, ff)
         cmd_ff = [
             ff, "-y",
             "-framerate", f"{cur_fps:.3f}",
             "-i", str(seq_dir / "%08d.png"),
         ]
+        if keep_audio:
+            cmd_ff += ["-i", str(input_video)]
+
         if use_ffmpeg_mci:
             target_fps = in_fps * rife_factor
             if progress_cb:
@@ -439,6 +519,9 @@ def enhance_video(
         else:
             if progress_cb:
                 progress_cb(88.0, f"H.264 MP4 kodlanıyor ({cur_w}x{cur_h} @ {cur_fps:.0f}fps, CRF {crf})...")
+
+        if keep_audio:
+            cmd_ff += ["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest"]
 
         cmd_ff += [
             "-c:v", "libx264",
@@ -467,6 +550,7 @@ def enhance_video(
             "in_frames": n_frames,
             "out_frames": out_frames,
             "out_fps": round(cur_fps, 1),
+            "audio_preserved": keep_audio,
             "upscale_model": upscale_model if upscale_factor >= 2 else "none",
             "interp_backend": interp_backend,
             "upscale_sec": round(up_sec, 2),

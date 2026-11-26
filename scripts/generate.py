@@ -930,9 +930,8 @@ def main() -> int:
             args.width, args.height = w32, h32
 
     if args.cinema_hd:
-        # Native 480p+ (832x480) already has crisp photorealistic detail: default to 32fps AOBMC (11s)
-        # unless user explicitly requested --upscale 2. For <=640x384, upscale 2x -> 1280x768 + 32fps!
-        if args.width <= 640 and args.upscale == 1:
+        # Upscale 2x for <=768w (640x384 -> 1280x768, 768x448 -> 1536x896); interpolate 2x when <24fps (16 -> 32fps)
+        if args.width <= 768 and args.upscale == 1:
             args.upscale = 2
         if args.rife == 1 and args.fps < 24:
             args.rife = 2
@@ -1340,6 +1339,8 @@ def main() -> int:
             ltx_cmd += ["-i", str(args.init_img.resolve())]
         if is_i2v_ltx and args.end_img is not None:
             ltx_cmd += ["--end-img", str(args.end_img.resolve())]
+        ltx_max_vram = "-1.4" if hw["vram_class"] in ("4GB", "6GB") else "0"
+        ltx_tile_size = "320x320" if hw["vram_class"] == "4GB" else "384x384"
         ltx_cmd += [
             "-p", args.prompt,
             "-W", str(args.width),
@@ -1352,9 +1353,10 @@ def main() -> int:
             "--seed", str(args.seed),
             "--offload-to-cpu",
             "--mmap",
-            "--max-vram", "0",
-            "--disable-prefetch",
+            "--max-vram", ltx_max_vram,
             "--vae-tiling",
+            "--vae-tile-size", ltx_tile_size,
+            "--vae-tile-overlap", "0.15",
             "--temporal-tiling",
             "-o", str(raw_webm),
         ]
@@ -1367,6 +1369,9 @@ def main() -> int:
             "frames": args.frames,
             "fps": args.fps,
             "audio_enabled": use_audio,
+            "max_vram": ltx_max_vram,
+            "vae_tile_size": ltx_tile_size,
+            "cinema_hd": {"enabled": use_postprocess, "upscale": args.upscale, "rife": args.rife, "upscale_model": args.upscale_model},
             "sigmas": LTX23_DISTILLED_SIGMAS,
             "cmd": ltx_cmd,
             "output_mp4": str(out_mp4),
@@ -1422,6 +1427,33 @@ def main() -> int:
         if out_mp4.suffix.lower() == ".webm":
             final_ltx = raw_webm
             enc_ltx = "webm_native"
+        elif use_postprocess:
+            ok_u, ok_r = postprocess.ensure_tools_installed(args.upscale >= 2, args.rife >= 2)
+            if ok_u and ok_r:
+                print(
+                    f"[PicoVid LTX-2.3] Sinema HD başlıyor ({args.upscale}x Vulkan AI Upscale · "
+                    f"{args.rife}x Akıcılık · 48kHz Stereo Ses korunuyor)...",
+                    flush=True,
+                )
+                pp_res = postprocess.enhance_video(
+                    raw_webm,
+                    out_mp4,
+                    upscale_factor=args.upscale,
+                    rife_factor=args.rife,
+                    upscale_model=args.upscale_model,
+                    crf=15,
+                    progress_cb=lambda pct, msg: print(f"[Sinema HD {pct:4.0f}%] {msg}", flush=True),
+                )
+                raw_webm.unlink(missing_ok=True)
+                final_ltx = out_mp4
+                enc_ltx = f"CinemaHD {pp_res['out_res']}@{pp_res['out_fps']}fps{'+AAC' if pp_res.get('audio_preserved') else ''}"
+            else:
+                enc_ltx = convert_webm_to_mp4(raw_webm, out_mp4)
+                if enc_ltx != "webm_only" and out_mp4.exists():
+                    raw_webm.unlink(missing_ok=True)
+                    final_ltx = out_mp4
+                else:
+                    final_ltx = raw_webm
         else:
             enc_ltx = convert_webm_to_mp4(raw_webm, out_mp4)
             if enc_ltx != "webm_only" and out_mp4.exists():

@@ -143,13 +143,18 @@ class TestCliDryRuns(unittest.TestCase):
         self.assertEqual(d["resolution"], "832x480")
 
     def test_dry_run_ltx23_t2v_and_snapping(self) -> None:
-        d = self._run_dry(["--engine", "ltx23", "--mode", "t2v", "-p", "cinematic ocean", "-W", "770", "-H", "450", "-f", "26"])
+        d = self._run_dry(["--engine", "ltx23", "--mode", "t2v", "-p", "cinematic ocean", "-W", "770", "-H", "450", "-f", "26", "--cinema-hd"])
         self.assertEqual(d["engine"], "ltx23")
         self.assertEqual(d["resolution"], "768x448")
         self.assertEqual(d["frames"], 33)
         self.assertEqual(d["fps"], 24)
         self.assertTrue(d["audio_enabled"])
+        self.assertEqual(d["max_vram"], "-1.4")
+        self.assertEqual(d["vae_tile_size"], "384x384")
+        self.assertTrue(d["cinema_hd"]["enabled"])
         self.assertIn("--audio-vae", d["cmd"])
+        self.assertIn("384x384", d["cmd"])
+        self.assertNotIn("--disable-prefetch", d["cmd"])
         self.assertIn(generate.LTX23_DISTILLED_SIGMAS, d["cmd"])
 
 
