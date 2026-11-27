@@ -1,8 +1,21 @@
-# PicoVid v0.7.0
+# PicoVid v0.7.0 — Local AI Audio+Video Studio on Low-End 4–6 GB GPUs (AMD & NVIDIA)
 
-**[English](README.md) · [Türkçe](README.tr.md)**
+[![Regression Tests](https://github.com/ffalcon3098-droid/localVid/actions/workflows/tests.yml/badge.svg)](https://github.com/ffalcon3098-droid/localVid/actions/workflows/tests.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-> **Run flagship 22B Audio+Video diffusion (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Audio) & `Z-Image-Turbo` on 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — featuring an English-first Local Web Studio & CLI, 2-stage native x2 spatial latent upscaling, 4.3×–11.6× faster tiled Video VAE, Audio-Preserving Cinema HD (`1280×768 @ 32fps`), and a Multi-Clip Timeline Editor (`xfade` + stereo `acrossfade`).**
+**[English](README.md) · [Türkçe](README.tr.md)** · **Platform:** Windows 10/11 (x64) · **GPUs:** AMD Radeon (Vulkan), NVIDIA GeForce GTX/RTX (CUDA & Vulkan), Intel Arc (Vulkan)
+
+> **Run flagship 22B Audio+Video diffusion (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Audio), fast 5-second `Wan 2.2 TI2V-5B Turbo`, & `Z-Image-Turbo` on ordinary 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — featuring an English-first Local Web Studio & CLI, 2-stage native x2 spatial latent upscaling, 4.3×–11.6× faster tiled Video VAE, Audio-Preserving Cinema HD (`1280×768 @ 32fps`), and a Multi-Clip Timeline Editor (`xfade` + stereo `acrossfade`).**
+
+## AMD & NVIDIA GPU Compatibility + Honest Hardware Tiers
+
+All low-VRAM streaming optimizations use backend-agnostic `ggml_backend_*` / `stable-diffusion.cpp` pipelines so **both AMD (Vulkan) and NVIDIA (CUDA & Vulkan)** users can run high-end video models on 4–6 GB cards:
+
+| System Tier (VRAM + System RAM) | Compatible GPUs (AMD & NVIDIA) | Best Models | Notes |
+|---|---|---|---|
+| **4–6 GB VRAM + 16 GB RAM** *(Entry / Low-End)* | GTX 1650/1660, RTX 2060/3050, RX 5500/5600 XT, Intel Arc | **`Wan 2.2 TI2V-5B Turbo`** (`7.92 GiB`) + **`Z-Image-Turbo`** (`6.24 GiB`) | Fast 5-second clips (~3–6 min) + 22s first frames with low RAM footprint. |
+| **6 GB VRAM + 32 GB RAM** *(Verified Sweet Spot)* | **RX 5600 XT 6 GB (Physically Verified)**, RTX 2060/3060 Laptop | **`LTX-2.3 22B Audio+Video`** (`24.09 GiB`) + **`Wan 2.2 14B`** | Full 22B Audio+Video with 2-stage x2 upscaler & Audio-Preserving Cinema HD (`1280×768 @ 32fps`). |
+| **8 GB+ VRAM + 32 GB RAM** *(Mid-Range)* | RTX 3060/4060/4070, RX 6600/7600+ | All models (`LTX-2.3 22B` + `Wan 2.2` + `Z-Image`) | Higher VRAM headroom removes `--max-vram` throttling for even faster steps. |
 
 ## What's New in v0.6.0–v0.7.0
 
@@ -216,7 +229,19 @@ py scripts/generate.py --mode studio -p "test" -W 832 -H 480 -f 33 --dry-run
 | **AMD / Intel 4–8 GB GPUs (Windows / Linux)** | Vulkan | **Architecture-Ready (Community Test Welcome)** | Uses pure `ggml-vulkan` + `probe_hardware.py` heap budget detection. |
 | **NVIDIA 4–8 GB GPUs (GTX 1050 Ti / RTX 2060 / 3050 / 3060 / 4060)** | CUDA | **Architecture-Ready (Community Test Welcome)** | All 9 patches use backend-agnostic `ggml_backend_*` APIs; `generate.py` auto-selects CUDA profiles (`--simulate-profile cuda-4gb` verified). |
 
-*Note: System RAM requirement is **16–32 GB** (mmap-backed 9 GB DiT + 3.4 GB UMT5-XXL on CPU; 32 GB recommended for `49f–81f` with `SD_CUT_CACHE_HOST_MB`).*
+*Note: System RAM requirement is **16 GB** for `Wan 2.2 TI2V-5B` / `Z-Image-Turbo` and **24–32 GB** for `LTX-2.3 22B + Gemma-3-12B` or `Wan 2.2 14B` long clips.*
+
+---
+
+## License & Third-Party Models
+
+- **PicoVid source code, scripts, Web Studio, and patches** are licensed under the **[Apache License, Version 2.0](LICENSE)**.
+- **Downloaded model weights & optional tools** are NOT bundled in this repository and remain subject to their respective upstream licenses (listed per file in `configs/models_registry.json`):
+  - `Wan 2.2` & `Z-Image-Turbo` & `Qwen3-4B`: **Apache-2.0**
+  - `LTX-2.3 22B Distilled`: **LTX Community License** (Lightricks)
+  - `Gemma 3 12B`: **Gemma Terms of Use** (Google)
+  - `TAEHV` & `rife-ncnn-vulkan`: **MIT** · `realesrgan-ncnn-vulkan`: **BSD-3-Clause**
+- Built on top of [`leejet/stable-diffusion.cpp`](https://github.com/leejet/stable-diffusion.cpp) and [`ggml`](https://github.com/ggml-org/ggml).
 
 ---
 

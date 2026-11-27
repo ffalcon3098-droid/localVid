@@ -1,8 +1,21 @@
-# PicoVid v0.7.0
+# PicoVid v0.7.0 — Düşük Donanımlı 4–6 GB GPU'larda (AMD & NVIDIA) Yerel Ses+Video Yapay Zeka Stüdyosu
 
-**[English](README.md) · [Türkçe](README.tr.md)**
+[![Regression Tests](https://github.com/ffalcon3098-droid/localVid/actions/workflows/tests.yml/badge.svg)](https://github.com/ffalcon3098-droid/localVid/actions/workflows/tests.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-> **Amiral gemisi 22B Ses + Video üretim modelini (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Ses) ve `Z-Image-Turbo`'yu 4–6 GB VRAM'li kartlarda (AMD Vulkan & NVIDIA CUDA) çalıştırır — İngilizce varsayılan Web Stüdyosu & CLI, 2-aşamalı natif x2 latent yükseltme, 4.3×–11.6× daha hızlı Video VAE, Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ve Çoklu Klip Zaman Çizelgesi (`xfade` + stereo `acrossfade`) içerir.**
+**[English](README.md) · [Türkçe](README.tr.md)** · **Platform:** Windows 10/11 (x64) · **GPU Desteği:** AMD Radeon (Vulkan), NVIDIA GeForce GTX/RTX (CUDA & Vulkan), Intel Arc (Vulkan)
+
+> **Amiral gemisi 22B Ses + Video üretim modelini (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Ses), hızlı 5 saniyelik `Wan 2.2 TI2V-5B Turbo`'yu ve `Z-Image-Turbo`'yu sıradan 4–6 GB VRAM'li kartlarda (AMD Vulkan & NVIDIA CUDA) çalıştırır — İngilizce varsayılan Web Stüdyosu & CLI, 2-aşamalı natif x2 latent yükseltme, 4.3×–11.6× daha hızlı Video VAE, Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ve Çoklu Klip Zaman Çizelgesi (`xfade` + stereo `acrossfade`) içerir.**
+
+## AMD & NVIDIA GPU Uyumluluğu + Dürüst Donanım Katmanları
+
+Tüm düşük-VRAM akış optimizasyonları backend-bağımsız `ggml_backend_*` / `stable-diffusion.cpp` hatlarını kullanır; böylece **hem AMD (Vulkan) hem NVIDIA (CUDA & Vulkan)** kullanıcıları 4–6 GB kartlarda güçlü video modellerini çalıştırabilir:
+
+| Sistem Katmanı (VRAM + Sistem RAM) | Uyumlu GPU'lar (AMD & NVIDIA) | En Uygun Modeller | Notlar |
+|---|---|---|---|
+| **4–6 GB VRAM + 16 GB RAM** *(Giriş / Düşük Donanım)* | GTX 1650/1660, RTX 2060/3050, RX 5500/5600 XT, Intel Arc | **`Wan 2.2 TI2V-5B Turbo`** (`7.92 GiB`) + **`Z-Image-Turbo`** (`6.24 GiB`) | Düşük RAM kullanımıyla hızlı 5 saniyelik klipler (~3–6 dk) ve 22 sn ilk kare üretimi. |
+| **6 GB VRAM + 32 GB RAM** *(Doğrulanmış İdeal)* | **RX 5600 XT 6 GB (Fiziksel Doğrulandı)**, RTX 2060/3060 Laptop | **`LTX-2.3 22B Ses+Video`** (`24.09 GiB`) + **`Wan 2.2 14B`** | 2-aşamalı x2 yükseltici ve Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ile tam 22B Ses+Video. |
+| **8 GB+ VRAM + 32 GB RAM** *(Orta Segment)* | RTX 3060/4060/4070, RX 6600/7600+ | Tüm modeller (`LTX-2.3 22B` + `Wan 2.2` + `Z-Image`) | Geniş VRAM tavanı sayesinde `--max-vram` kısıtlaması kalkar, daha yüksek adım hızı alınır. |
 
 ## v0.6.0–v0.7.0 Yenilikleri
 
@@ -195,12 +208,17 @@ py scripts/generate.py --mode studio -p "test" -W 832 -H 480 -f 33 --dry-run
 | **AMD / Intel 4–8 GB Kartlar (Windows / Linux)** | Vulkan | **Mimari Hazır (Topluluk Testi Bekleniyor)** | Saf `ggml-vulkan` + `probe_hardware.py` heap bütçesi tespiti kullanır. |
 | **NVIDIA 4–8 GB Kartlar (GTX 1050 Ti / RTX 2060 / 3050 / 3060 / 4060)** | CUDA | **Mimari Hazır (Topluluk Testi Bekleniyor)** | 9 yamanın tamamı backend-bağımsız `ggml_backend_*` API kullanır; `generate.py` CUDA profillerini otomatik seçer (`--simulate-profile cuda-4gb` doğrulandı). |
 
-*Not: Sistem RAM gereksinimi **16–32 GB**'dır (`49f–81f` uzun kliplerde `SD_CUT_CACHE_HOST_MB` için 32 GB önerilir).*
+*Not: Sistem RAM gereksinimi `Wan 2.2 TI2V-5B` / `Z-Image-Turbo` için **16 GB**, `LTX-2.3 22B + Gemma-3-12B` veya uzun `Wan 2.2 14B` klipleri için **24–32 GB**'dır.*
 
 ---
 
-## Lisans ve Teşekkür
+## Lisans ve Üçüncü Parti Modeller
 
-- **PicoVid**, **[Apache License 2.0](LICENSE)** ile lisanslanmıştır.
+- **PicoVid kaynak kodu, betikleri, Web Stüdyosu ve yamaları** **[Apache License 2.0](LICENSE)** ile lisanslanmıştır.
+- **İndirilen model ağırlıkları ve opsiyonel araçlar** bu repoda barındırılmaz; kendi kaynak lisanslarına tabidir (`configs/models_registry.json` dosyasında dosya bazlı belirtilir):
+  - `Wan 2.2`, `Z-Image-Turbo`, `Qwen3-4B`: **Apache-2.0**
+  - `LTX-2.3 22B Distilled`: **LTX Community License** (Lightricks)
+  - `Gemma 3 12B`: **Gemma Terms of Use** (Google)
+  - `TAEHV` & `rife-ncnn-vulkan`: **MIT** · `realesrgan-ncnn-vulkan`: **BSD-3-Clause**
 - [`leejet/stable-diffusion.cpp`](https://github.com/leejet/stable-diffusion.cpp) ve [`ggml`](https://github.com/ggml-org/ggml) üzerine inşa edilmiştir.
 - Düşük VRAM yama metodolojisi kısmen [`alexturkey/VideoTurko`](https://github.com/alexturkey/VideoTurko) projesinden ilham almıştır.

@@ -284,9 +284,9 @@ def recommend_bundle(host: dict[str, Any]) -> tuple[str, str]:
     disk = float(host["disk_free_gib"])
 
     if vram <= 4.5 or ram <= 16.5 or disk < 24.5:
-        return "1", f"Lightest 4–6 GB VRAM / fast 5s video bundle (GPU {vram:.1f} GiB, RAM {ram:.1f} GiB)"
+        return "1", f"Lightest 4–6 GB VRAM + 16 GB RAM starter bundle (GPU {vram:.1f} GiB, RAM {ram:.1f} GiB)"
     if ram >= 24.0 and disk >= 29.5:
-        return "3", f"Full-quality 14B Studio bundle for 6 GB+ VRAM ({vram:.1f} GiB) and >=24 GB RAM ({ram:.1f} GiB)"
+        return "3", f"Flagship LTX-2.3 22B Audio+Video for 6 GB+ VRAM ({vram:.1f} GiB) and >=24 GB RAM ({ram:.1f} GiB)"
     return "4", f"Compact Q3_K_M Studio bundle for lower disk/RAM (RAM {ram:.1f} GiB, Disk {disk:.1f} GiB)"
 
 
@@ -342,11 +342,12 @@ def run_interactive_downloader(
     profiles = reg["download_profiles"]
 
     menu_items = [
-        ("1", "fast-5b", "Fast 5s Bundle: Wan 2.2 TI2V-5B Turbo (T2V + I2V)", "5-second clips (~3-6 min), 4-6 GB VRAM"),
-        ("2", "t2v", "14B T2V Starter (Wan 2.2 14B T2V Q4_K + TE + VAE)", "14B single-model T2V"),
-        ("3", "studio", "14B Studio Bundle: T2I + I2V Q4_K_M", "For 6 GB+ VRAM and >=24 GB RAM"),
-        ("4", "studio-compact", "14B Studio Compact: T2I + I2V Q3_K_M", "Lower disk/RAM alternative"),
-        ("5", "all", "Full Bundle: 5B Turbo + 14B T2V + T2I + I2V", "All modes complete"),
+        ("1", "fast-5b", "Fast 5s Bundle: Wan 2.2 TI2V-5B Turbo (T2V + I2V)", "4–6 GB VRAM + 16 GB RAM (~3–6 min)"),
+        ("2", "t2v", "14B T2V Starter: Wan 2.2 14B T2V Q4_K + TE + VAE", "14B single-model T2V"),
+        ("3", "ltx23", "Flagship: LTX-2.3 22B Distilled Audio+Video + x2 Upscaler", "6 GB+ VRAM & >=24 GB RAM (48 kHz Stereo)"),
+        ("4", "studio-compact", "14B Studio Compact: Z-Image T2I + Wan 2.2 I2V Q3_K_M", "Lower disk/RAM Studio alternative"),
+        ("5", "ltx23-studio", "LTX-2.3 Studio: Z-Image-Turbo T2I + LTX-2.3 22B Audio+Video", "First-frame approval + Audio+Video"),
+        ("6", "all", "Full Legacy Wan 2.2 Pack: 5B Turbo + 14B T2V + T2I + I2V", "All Wan 2.2 modes"),
     ]
 
     def calc_pack_sizes(prof_key: str) -> tuple[int, int]:
@@ -400,10 +401,10 @@ def run_interactive_downloader(
         return 0
 
     if use_rich:
-        choice = Prompt.ask("Bundle to download", choices=["1", "2", "3", "4", "5"], default=rec_key)
+        choice = Prompt.ask("Bundle to download", choices=["1", "2", "3", "4", "5", "6"], default=rec_key)
     else:
         choice = input(f"Bundle to download [{rec_key}]: ").strip() or rec_key
-        if choice not in ("1", "2", "3", "4", "5"):
+        if choice not in ("1", "2", "3", "4", "5", "6"):
             choice = rec_key
 
     chosen_prof = dict((k, p) for k, p, _, _ in menu_items)[choice]
@@ -437,7 +438,7 @@ def main() -> int:
     profiles = reg["download_profiles"]
     files_map = reg["files"]
 
-    parser = argparse.ArgumentParser(description="PicoVid: Download Apache-2.0 models from configs/models_registry.json")
+    parser = argparse.ArgumentParser(description="PicoVid: Download supported models from configs/models_registry.json (see registry for upstream licenses)")
     parser.add_argument(
         "--profile",
         choices=list(profiles.keys()),

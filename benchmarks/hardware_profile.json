@@ -92,7 +92,7 @@
       "Vulkan0\tAMD Radeon RX 5600 XT",
       "CPU\tAMD Ryzen 5 5500"
     ],
-    "raw_output": "Vulkan0\tAMD Radeon RX 5600 XT\nCPU\tAMD Ryzen 5 5500                               \n\nggml_vulkan: Found 1 Vulkan devices:\nggml_vulkan: 0 = AMD Radeon RX 5600 XT (AMD proprietary driver) | uma: 0 | rebar: 0 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 32768 | int dot: 0 | matrix cores: none\nload_backend: loaded Vulkan backend from C:\\Users\\ROBONENTA\\Desktop\\Projects\\localVid\\bin\\sdcpp-vulkan\\ggml-vulkan.dll\nload_backend: loaded CPU backend from C:\\Users\\ROBONENTA\\Desktop\\Projects\\localVid\\bin\\sdcpp-vulkan\\ggml-cpu-haswell.dll"
+    "raw_output": "Vulkan0\tAMD Radeon RX 5600 XT\nCPU\tAMD Ryzen 5 5500                               \n\nggml_vulkan: Found 1 Vulkan devices:\nggml_vulkan: 0 = AMD Radeon RX 5600 XT (AMD proprietary driver) | uma: 0 | rebar: 0 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 32768 | int dot: 0 | matrix cores: none\nload_backend: loaded Vulkan backend from <REPO_ROOT>\\bin\\sdcpp-vulkan\\ggml-vulkan.dll\nload_backend: loaded CPU backend from <REPO_ROOT>\\bin\\sdcpp-vulkan\\ggml-cpu-haswell.dll"
   },
   "recommendations": [
     "Vulkan GPU 'AMD Radeon RX 5600 XT' has maxMemoryAllocationSize=2.0 GiB. Any single tensor/compute/im2col buffer > 2.0 GiB will fail with VK_ERROR_OUT_OF_DEVICE_MEMORY.",
