@@ -7,6 +7,18 @@
 
 > **Amiral gemisi 22B Ses + Video üretim modelini (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Ses), hızlı 5 saniyelik `Wan 2.2 TI2V-5B Turbo`'yu ve `Z-Image-Turbo`'yu sıradan 4–6 GB VRAM'li kartlarda (AMD Vulkan & NVIDIA CUDA) çalıştırır — İngilizce varsayılan Web Stüdyosu & CLI, 2-aşamalı natif x2 latent yükseltme, 4.3×–11.6× daha hızlı Video VAE, Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ve Çoklu Klip Zaman Çizelgesi (`xfade` + stereo `acrossfade`) içerir.**
 
+<p align="center">
+  <img src="docs/assets/ltx23_showcase_grid.jpg" alt="AMD RX 5600 XT 6 GB Vulkan üzerinde üretilmiş 4 Sahneli LTX-2.3 22B Ses+Video Vitrini" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/ltx23_bosphorus_preview.gif" alt="İstanbul Boğazı Gün Batımı — 6 GB VRAM'de yerel üretilen LTX-2.3 22B önizlemesi" width="62%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/terminal_showcase.svg" alt="localVid v0.7.0 Terminal CLI ve 6 GB VRAM LTX-2.3 Hattı" width="100%">
+</p>
+
 ## AMD & NVIDIA GPU Uyumluluğu + Dürüst Donanım Katmanları
 
 Tüm düşük-VRAM akış optimizasyonları backend-bağımsız `ggml_backend_*` / `stable-diffusion.cpp` hatlarını kullanır; böylece **hem AMD (Vulkan) hem NVIDIA (CUDA & Vulkan)** kullanıcıları 4–6 GB kartlarda güçlü video modellerini çalıştırabilir:

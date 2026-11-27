@@ -7,6 +7,18 @@
 
 > **Run flagship 22B Audio+Video diffusion (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Audio), fast 5-second `Wan 2.2 TI2V-5B Turbo`, & `Z-Image-Turbo` on ordinary 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — featuring an English-first Local Web Studio & CLI, 2-stage native x2 spatial latent upscaling, 4.3×–11.6× faster tiled Video VAE, Audio-Preserving Cinema HD (`1280×768 @ 32fps`), and a Multi-Clip Timeline Editor (`xfade` + stereo `acrossfade`).**
 
+<p align="center">
+  <img src="docs/assets/ltx23_showcase_grid.jpg" alt="LTX-2.3 22B Audio+Video 4-Scene Showcase generated on AMD RX 5600 XT 6 GB Vulkan" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/ltx23_bosphorus_preview.gif" alt="Istanbul Bosphorus Sunset — LTX-2.3 22B generated locally on 6 GB VRAM" width="62%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/terminal_showcase.svg" alt="localVid v0.7.0 Terminal CLI & 6 GB VRAM LTX-2.3 Pipeline" width="100%">
+</p>
+
 ## AMD & NVIDIA GPU Compatibility + Honest Hardware Tiers
 
 All low-VRAM streaming optimizations use backend-agnostic `ggml_backend_*` / `stable-diffusion.cpp` pipelines so **both AMD (Vulkan) and NVIDIA (CUDA & Vulkan)** users can run high-end video models on 4–6 GB cards:
