@@ -68,7 +68,7 @@ def ensure_sd_cli_available(sd_cli: pathlib.Path, backend: str, interactive: boo
     print(f"          Detected backend: {backend.upper()}", file=sys.stderr)
     if not (interactive or ui_console.is_interactive_tty()):
         print(
-            f"To build from source:\n"
+            f"Run .\\setup.cmd to install the prebuilt engine, or build from source:\n"
             f"  powershell -ExecutionPolicy Bypass -File scripts/apply_patches.ps1\n"
             f"  powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -Backend {backend}",
             file=sys.stderr,
