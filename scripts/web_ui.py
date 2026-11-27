@@ -23,6 +23,7 @@ import os
 import pathlib
 import random
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,54 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 OUTPUTS_DIR = REPO_ROOT / "outputs"
 UPLOADS_DIR = OUTPUTS_DIR / "_uploads"
+BENCH_MEDIA_DIR = REPO_ROOT / "benchmarks" / "runs" / "v03_5b"
+ALLOWED_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+ALLOWED_VIDEO_EXTS = frozenset({".mp4", ".webm"})
+ALLOWED_MEDIA_EXTS = ALLOWED_IMAGE_EXTS | ALLOWED_VIDEO_EXTS
+ALLOWED_ENGINES = frozenset({"ltx23", "5b", "14b"})
+ALLOWED_MODES = frozenset({"t2v", "i2v", "t2i", "studio"})
+MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
+MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024
+
+
+def _resolve_media_path(rel: str, allowed_exts: frozenset[str] = ALLOWED_MEDIA_EXTS) -> pathlib.Path | None:
+    """Safely resolve a relative media path strictly inside OUTPUTS_DIR (or gallery benchmark dir)."""
+    clean_rel = str(rel or "").strip().lstrip("/\\")
+    if not clean_rel or "\x00" in clean_rel:
+        return None
+    try:
+        target = (REPO_ROOT / clean_rel).resolve()
+    except Exception:
+        return None
+    allowed_roots = (OUTPUTS_DIR.resolve(), BENCH_MEDIA_DIR.resolve())
+    if not any(target.is_relative_to(r) for r in allowed_roots):
+        return None
+    if target.suffix.lower() not in allowed_exts:
+        return None
+    if not target.exists() or not target.is_file():
+        return None
+    return target
+
+
+def _is_localhost_host(host_header: str) -> bool:
+    h = (host_header or "").strip().lower()
+    if not h:
+        return True
+    if h.startswith("[::1]"):
+        return h == "[::1]" or h.startswith("[::1]:")
+    host_only = h.split(":", 1)[0]
+    return host_only in ("127.0.0.1", "localhost")
+
+
+def _is_localhost_origin(origin_header: str) -> bool:
+    o = (origin_header or "").strip()
+    if not o:
+        return True
+    try:
+        parsed = urllib.parse.urlparse(o)
+        return parsed.scheme in ("http", "https") and (parsed.hostname or "").lower() in ("127.0.0.1", "localhost", "::1")
+    except Exception:
+        return False
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -73,6 +122,7 @@ class StudioState:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
+        self.csrf_token: str = secrets.token_urlsafe(24)
         self.hw: dict[str, Any] = generate.detect_hardware()
         self.vram_sampler = ui_console.LiveVramSampler(total_vram_gib=self.hw["vram_total_gib"], interval_sec=1.5)
         self.vram_sampler.start()
@@ -136,16 +186,24 @@ class StudioState:
             self.stage = "İptal ediliyor..."
             self.detail = "Çalışan süreç durduruluyor..."
         if proc is not None and proc.poll() is None:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-        if os.name == "nt":
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", "Get-Process -Name 'sd-cli' -ErrorAction SilentlyContinue | Stop-Process -Force"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            if os.name == "nt":
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=6,
+                    )
+                except Exception:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
         return True
 
     def _append_log(self, line: str) -> None:
@@ -293,11 +351,16 @@ class StudioState:
                     was_cancel = self._cancel_requested
                     self.proc = None
                     self.job_running = False
-                    out_abs = REPO_ROOT / out_rel
+                    out_abs = (REPO_ROOT / out_rel) if out_rel else None
                     if was_cancel:
                         self.stage = "İptal Edildi"
                         self.detail = "Üretim kullanıcı tarafından durduruldu."
-                    elif rc == 0 and out_abs.exists():
+                    elif rc == 0 and kind == "download":
+                        self.progress_pct = 100.0
+                        self.stage = "Tamamlandı"
+                        el = time.monotonic() - self.started_at
+                        self.detail = f"Model indirme tamamlandı ({el:.1f} sn)."
+                    elif rc == 0 and out_abs is not None and out_abs.exists():
                         self.progress_pct = 100.0
                         self.stage = "Tamamlandı"
                         el = time.monotonic() - self.started_at
@@ -350,7 +413,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PicoVid v0.4.0 · AI Video Studio</title>
+<title>PicoVid v0.6.0 · AI Video Studio</title>
 <style>
 :root{--bg:#090d16;--panel:#111827;--panel2:#162033;--border:#24324a;--accent:#38bdf8;--accent2:#818cf8;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--text:#f1f5f9;--muted:#94a3b8}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0%,#132038,#090d16 55%);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif;min-height:100vh}
@@ -557,6 +620,14 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent)}
 </main>
 
 <script>
+const PICOVID_TOKEN = __PICOVID_TOKEN__;
+async function apiPost(url, payload) {
+  return fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-PicoVid-Token': PICOVID_TOKEN},
+    body: JSON.stringify(payload || {})
+  });
+}
 let curMode = 'studio';
 let uploadedPath = null;
 let studioFramePath = null;
@@ -612,13 +683,15 @@ async function uploadImage(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async () => {
-    const r = await fetch('/api/upload', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:file.name, data_url:reader.result})});
+    const r = await apiPost('/api/upload', {name:file.name, data_url:reader.result});
     const d = await r.json();
     if (d.ok) {
       uploadedPath = d.rel_path;
       document.getElementById('dropText').textContent = 'Yüklendi: ' + file.name;
       const img = document.getElementById('uploadPreview');
       img.src = d.url; img.classList.remove('hidden');
+    } else if (d.error) {
+      alert(d.error);
     }
   };
   reader.readAsDataURL(file);
@@ -627,10 +700,7 @@ async function uploadImage(file) {
 async function runT2I(reroll=false) {
   const [w, h] = document.getElementById('res').value.split('x').map(Number);
   const seedRaw = reroll ? '' : document.getElementById('seed').value.trim();
-  const r = await fetch('/api/t2i', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({prompt: document.getElementById('prompt').value.trim(), width:w, height:h, seed: seedRaw ? parseInt(seedRaw) : null})
-  });
+  const r = await apiPost('/api/t2i', {prompt: document.getElementById('prompt').value.trim(), width:w, height:h, seed: seedRaw ? parseInt(seedRaw) : null});
   const d = await r.json();
   if (!d.ok) alert(d.error || 'Başlatılamadı');
 }
@@ -641,26 +711,23 @@ async function runVideo(fromStudio) {
   const seedRaw = document.getElementById('seed').value.trim();
   const initPath = fromStudio ? studioFramePath : (curMode === 'i2v' ? uploadedPath : null);
   if ((fromStudio || curMode === 'i2v') && !initPath) { alert('Önce bir giriş görseli üretin veya yükleyin.'); return; }
-  const r = await fetch('/api/generate', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      engine: document.getElementById('engine').value,
-      mode: (fromStudio || curMode === 'i2v') ? 'i2v' : 't2v',
-      init_img: initPath,
-      prompt: document.getElementById('prompt').value.trim(),
-      segment_prompts: document.getElementById('segPrompts').value.trim() || null,
-      width: w, height: h, frames, segments, fps,
-      cinema_hd: document.getElementById('cinemaHd').checked,
-      fast_preview: document.getElementById('fastPreview').checked,
-      seed: seedRaw ? parseInt(seedRaw) : null
-    })
+  const r = await apiPost('/api/generate', {
+    engine: document.getElementById('engine').value,
+    mode: (fromStudio || curMode === 'i2v') ? 'i2v' : 't2v',
+    init_img: initPath,
+    prompt: document.getElementById('prompt').value.trim(),
+    segment_prompts: document.getElementById('segPrompts').value.trim() || null,
+    width: w, height: h, frames, segments, fps,
+    cinema_hd: document.getElementById('cinemaHd').checked,
+    fast_preview: document.getElementById('fastPreview').checked,
+    seed: seedRaw ? parseInt(seedRaw) : null
   });
   const d = await r.json();
   if (!d.ok) alert(d.error || 'Başlatılamadı');
 }
 
 async function cancelJob() {
-  await fetch('/api/cancel', {method:'POST'});
+  await apiPost('/api/cancel', {});
 }
 
 function showInPreview(url, kind) {
@@ -684,7 +751,7 @@ async function loadModelsStatus() {
 
 async function downloadProfile(profile, gib) {
   if (!confirm(`'${profile}' modeli (~${gib} GiB) şimdi indirilsin mi?`)) return;
-  const r = await fetch('/api/download-model', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile})});
+  const r = await apiPost('/api/download-model', {profile});
   const d = await r.json();
   if (!d.ok) alert(d.error || 'İndirme başlatılamadı');
 }
@@ -696,14 +763,11 @@ async function extendVideo(relPath, ev) {
   const frames = eng === '5b' ? 81 : 33;
   const promptTxt = document.getElementById('prompt').value.trim() || 'Continue smooth natural cinematic camera motion, 35mm film';
   if (!confirm(`"${relPath.split('/').pop()}" videosu son karesinden +${(frames/16).toFixed(1)} sn uzatılsın mı?`)) return;
-  const r = await fetch('/api/extend', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      base_video: relPath, engine: eng, prompt: promptTxt,
-      width: w, height: h, frames, fps: 16,
-      cinema_hd: document.getElementById('cinemaHd').checked,
-      fast_preview: document.getElementById('fastPreview').checked
-    })
+  const r = await apiPost('/api/extend', {
+    base_video: relPath, engine: eng, prompt: promptTxt,
+    width: w, height: h, frames, fps: 16,
+    cinema_hd: document.getElementById('cinemaHd').checked,
+    fast_preview: document.getElementById('fastPreview').checked
   });
   const d = await r.json();
   if (!d.ok) alert(d.error || 'Uzatma başlatılamadı');
@@ -744,13 +808,10 @@ async function renderTimeline() {
   const st = document.getElementById('tlStatus');
   btn.disabled = true; st.textContent = 'Kurgu birleştiriliyor (xfade + 48kHz stereo)...';
   try {
-    const r = await fetch('/api/timeline/render', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        clips: timelineClips.map(c => ({rel: c.rel})),
-        transition: document.getElementById('tlTrans').value,
-        transition_sec: parseFloat(document.getElementById('tlDur').value)
-      })
+    const r = await apiPost('/api/timeline/render', {
+      clips: timelineClips.map(c => ({rel: c.rel})),
+      transition: document.getElementById('tlTrans').value,
+      transition_sec: parseFloat(document.getElementById('tlDur').value)
     });
     const d = await r.json();
     if (d.ok) {
@@ -838,22 +899,58 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             self.wfile.write(data)
 
+        def _check_localhost_host(self) -> bool:
+            if not _is_localhost_host(self.headers.get("Host", "")):
+                self._send_json({"ok": False, "error": "Yasak Host başlığı"}, 403)
+                return False
+            return True
+
+        def _check_post_security(self) -> bool:
+            if not self._check_localhost_host():
+                return False
+            origin = self.headers.get("Origin", "")
+            if origin and not _is_localhost_origin(origin):
+                self._send_json({"ok": False, "error": "Yasak Origin"}, 403)
+                return False
+            ctype = (self.headers.get("Content-Type") or "").lower()
+            if not ctype.startswith("application/json"):
+                self._send_json({"ok": False, "error": "Content-Type application/json olmalı"}, 415)
+                return False
+            tok = self.headers.get("X-PicoVid-Token", "")
+            if not secrets.compare_digest(tok, state.csrf_token):
+                self._send_json({"ok": False, "error": "Geçersiz veya eksik oturum belirteci (CSRF)"}, 403)
+                return False
+            return True
+
         def _read_json(self) -> dict[str, Any]:
             n = int(self.headers.get("Content-Length", "0"))
+            if n < 0 or n > MAX_JSON_BODY_BYTES:
+                raise ValueError(f"İstek gövdesi çok büyük ({n} bayt)")
             raw = self.rfile.read(n) if n > 0 else b"{}"
-            return json.loads(raw.decode("utf-8"))
+            obj = json.loads(raw.decode("utf-8"))
+            if not isinstance(obj, dict):
+                raise ValueError("JSON gövdesi nesne olmalı")
+            return obj
 
         def do_GET(self) -> None:
+            if not self._check_localhost_host():
+                return
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             if path in ("/", "/index.html"):
-                body = INDEX_HTML.encode("utf-8")
+                html_out = INDEX_HTML.replace("__PICOVID_TOKEN__", json.dumps(state.csrf_token))
+                body = html_out.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -871,8 +968,8 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 return
             if path.startswith("/files/"):
                 rel = urllib.parse.unquote(path[len("/files/"):]).lstrip("/")
-                target = (REPO_ROOT / rel).resolve()
-                if not str(target).startswith(str(REPO_ROOT.resolve())) or not target.exists() or not target.is_file():
+                target = _resolve_media_path(rel, ALLOWED_MEDIA_EXTS)
+                if target is None:
                     self.send_error(HTTPStatus.NOT_FOUND)
                     return
                 ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
@@ -881,15 +978,22 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Accept-Ranges", "bytes")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "DENY")
                 self.end_headers()
                 self.wfile.write(data)
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
+            if not self._check_post_security():
+                return
             path = urllib.parse.urlparse(self.path).path
             try:
                 body = self._read_json()
+            except ValueError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 413 if "büyük" in str(exc) else 400)
+                return
             except Exception as exc:
                 self._send_json({"ok": False, "error": f"Geçersiz JSON: {exc}"}, 400)
                 return
@@ -901,15 +1005,28 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
 
             if path == "/api/upload":
                 data_url = str(body.get("data_url", ""))
-                name = re.sub(r"[^a-zA-Z0-9._-]", "_", str(body.get("name", "upload.png")))
+                raw_name = pathlib.Path(str(body.get("name", "upload.png"))).name
+                name = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name)
+                ext = pathlib.Path(name).suffix.lower()
+                if ext not in ALLOWED_IMAGE_EXTS:
+                    self._send_json({"ok": False, "error": "Yalnızca PNG, JPG veya WEBP görselleri yüklenebilir."}, 400)
+                    return
                 if "," not in data_url:
                     self._send_json({"ok": False, "error": "Geçersiz data_url"}, 400)
                     return
                 b64 = data_url.split(",", 1)[1]
+                try:
+                    img_bytes = base64.b64decode(b64, validate=True)
+                except Exception:
+                    self._send_json({"ok": False, "error": "Geçersiz base64 görsel verisi"}, 400)
+                    return
+                if len(img_bytes) > MAX_UPLOAD_IMAGE_BYTES:
+                    self._send_json({"ok": False, "error": "Görsel boyutu 15 MiB sınırını aşıyor."}, 413)
+                    return
                 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 dest = UPLOADS_DIR / f"{ts}_{name}"
-                dest.write_bytes(base64.b64decode(b64))
+                dest.write_bytes(img_bytes)
                 rel = dest.relative_to(REPO_ROOT).as_posix()
                 self._send_json({"ok": True, "rel_path": rel, "url": f"/files/{urllib.parse.quote(rel)}"})
                 return
@@ -920,11 +1037,10 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                     self._send_json({"ok": False, "error": "En az 1 klip seçin."}, 400)
                     return
                 resolved_clips: list[dict[str, Any]] = []
-                root_res = REPO_ROOT.resolve()
                 for c in raw_clips:
                     rel = str(c.get("rel") or "").lstrip("/")
-                    abs_p = (REPO_ROOT / rel).resolve()
-                    if not str(abs_p).startswith(str(root_res)) or not abs_p.exists():
+                    abs_p = _resolve_media_path(rel, ALLOWED_VIDEO_EXTS)
+                    if abs_p is None:
                         self._send_json({"ok": False, "error": f"Geçersiz klip yolu: {rel}"}, 403)
                         return
                     resolved_clips.append({
@@ -955,24 +1071,31 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 return
 
             if path == "/api/download-model":
-                profile = str(body.get("profile", "fast-5b"))
+                profile = str(body.get("profile", "ltx23")).strip()
+                valid_profiles = set(download_models.load_registry().get("download_profiles", {}).keys())
+                if profile not in valid_profiles:
+                    self._send_json({"ok": False, "error": f"Geçersiz model profili: {profile}"}, 400)
+                    return
                 cmd = [sys.executable, str(SCRIPT_DIR / "download_models.py"), "--profile", profile]
-                ok, msg = state.start_job("download", cmd, "configs/models_registry.json")
+                ok, msg = state.start_job("download", cmd, "")
                 self._send_json({"ok": ok, "message": msg, "profile": profile}, 200 if ok else 409)
                 return
 
             if path == "/api/extend":
                 base_rel = str(body.get("base_video", "")).lstrip("/")
-                base_abs = (REPO_ROOT / base_rel).resolve()
-                if not str(base_abs).startswith(str(REPO_ROOT.resolve())) or not base_abs.exists():
-                    self._send_json({"ok": False, "error": "Uzatılacak video bulunamadı."}, 404)
+                base_abs = _resolve_media_path(base_rel, ALLOWED_VIDEO_EXTS)
+                if base_abs is None:
+                    self._send_json({"ok": False, "error": "Uzatılacak video bulunamadı veya izin dışı."}, 404)
                     return
                 engine = str(body.get("engine", "5b"))
+                if engine not in ALLOWED_ENGINES:
+                    self._send_json({"ok": False, "error": f"Geçersiz motor: {engine}"}, 400)
+                    return
                 prompt = str(body.get("prompt") or "Continue smooth natural cinematic camera motion, 35mm film").strip()
-                w = int(body.get("width", 640))
-                h = int(body.get("height", 384))
-                frames = int(body.get("frames", 81 if engine == "5b" else 33))
-                fps = int(body.get("fps", 16))
+                w = max(64, min(2048, int(body.get("width", 640))))
+                h = max(64, min(2048, int(body.get("height", 384))))
+                frames = max(1, min(241, int(body.get("frames", 81 if engine == "5b" else 33))))
+                fps = max(1, min(60, int(body.get("fps", 16))))
                 cinema_hd = bool(body.get("cinema_hd", True))
                 fast_preview = bool(body.get("fast_preview", False))
                 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -995,8 +1118,8 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
 
             if path == "/api/t2i":
                 prompt = str(body.get("prompt") or ui_console.DEFAULT_SAMPLE_PROMPT).strip()
-                w = int(body.get("width", 640))
-                h = int(body.get("height", 384))
+                w = max(64, min(2048, int(body.get("width", 640))))
+                h = max(64, min(2048, int(body.get("height", 384))))
                 seed = int(body["seed"]) if body.get("seed") is not None else random.randint(1, 2_147_483_647)
                 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1014,17 +1137,29 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
             if path == "/api/generate":
                 engine = str(body.get("engine", "ltx23"))
                 mode = str(body.get("mode", "t2v"))
+                if engine not in ALLOWED_ENGINES:
+                    self._send_json({"ok": False, "error": f"Geçersiz motor: {engine}"}, 400)
+                    return
+                if mode not in ALLOWED_MODES:
+                    self._send_json({"ok": False, "error": f"Geçersiz mod: {mode}"}, 400)
+                    return
                 prompt = str(body.get("prompt") or ui_console.DEFAULT_SAMPLE_PROMPT).strip()
-                w = int(body.get("width", 640))
-                h = int(body.get("height", 384))
-                frames = int(body.get("frames", 81 if engine in ("ltx23", "5b") else 33))
+                w = max(64, min(2048, int(body.get("width", 640))))
+                h = max(64, min(2048, int(body.get("height", 384))))
+                frames = max(1, min(241, int(body.get("frames", 81 if engine in ("ltx23", "5b") else 33))))
                 segments = max(1, min(6, int(body.get("segments", 1))))
-                fps = int(body.get("fps", 16))
+                fps = max(1, min(60, int(body.get("fps", 16))))
                 seed = int(body["seed"]) if body.get("seed") is not None else random.randint(1, 2_147_483_647)
                 cinema_hd = bool(body.get("cinema_hd", True))
                 fast_preview = bool(body.get("fast_preview", False))
                 init_img = body.get("init_img")
                 seg_prompts = body.get("segment_prompts")
+                init_img_resolved: pathlib.Path | None = None
+                if mode == "i2v" and init_img:
+                    init_img_resolved = _resolve_media_path(str(init_img), ALLOWED_IMAGE_EXTS)
+                    if init_img_resolved is None:
+                        self._send_json({"ok": False, "error": "Geçersiz giriş görseli yolu (outputs/ içinde PNG/JPG/WEBP olmalı)."}, 403)
+                        return
 
                 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1040,8 +1175,8 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                     "--seed", str(seed),
                     "-o", out_rel, "--raw-logs",
                 ]
-                if mode == "i2v" and init_img:
-                    cmd += ["-i", str(init_img)]
+                if init_img_resolved is not None:
+                    cmd += ["-i", str(init_img_resolved)]
                 if seg_prompts:
                     cmd += ["--segment-prompts", str(seg_prompts)]
                 if cinema_hd and not fast_preview:

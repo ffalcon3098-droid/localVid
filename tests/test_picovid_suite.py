@@ -158,6 +158,10 @@ class TestCliDryRuns(unittest.TestCase):
         self.assertIn("384x384", d["cmd"])
         self.assertIn("--disable-prefetch", d["cmd"])
         self.assertIn("--hires", d["cmd"])
+        self.assertIn("--flash-attn", d["cmd"])
+        self.assertEqual(d["flash_attn"], "off")
+        self.assertEqual(d["compression_quality"], 100)
+        self.assertIn("--compression-quality", d["cmd"])
         self.assertIn(generate.LTX23_HIRES_SIGMAS, d["cmd"])
         self.assertIn(generate.LTX23_DISTILLED_SIGMAS, d["cmd"])
 
@@ -224,7 +228,19 @@ class TestPostprocessStitchAndLabAnchor(unittest.TestCase):
 
 
 class TestWebStudioServer(unittest.TestCase):
-    def test_http_endpoints(self) -> None:
+    def test_http_endpoints_and_security_shield(self) -> None:
+        import urllib.error
+        import zipfile
+
+        # Verify Zip-Slip guard in postprocess
+        with tempfile.TemporaryDirectory(prefix="picovid_zs_") as td:
+            zpath = pathlib.Path(td) / "evil.zip"
+            with zipfile.ZipFile(zpath, "w") as zf:
+                zf.writestr("../escape.txt", "boom")
+            with zipfile.ZipFile(zpath, "r") as zf:
+                with self.assertRaises(ValueError):
+                    postprocess._safe_extract_zip(zf, pathlib.Path(td) / "dest")
+
         state = web_ui.StudioState()
         server = ThreadingHTTPServer(("127.0.0.1", 0), web_ui.make_handler(state))
         port = server.server_address[1]
@@ -234,8 +250,10 @@ class TestWebStudioServer(unittest.TestCase):
             base = f"http://127.0.0.1:{port}"
             with urllib.request.urlopen(f"{base}/", timeout=5) as r:
                 self.assertEqual(r.status, 200)
+                self.assertEqual(r.headers.get("X-Frame-Options"), "DENY")
                 html = r.read().decode("utf-8")
                 self.assertIn("PicoVid Studio", html)
+                self.assertIn(state.csrf_token, html)
 
             for ep in ("/api/hardware", "/api/status", "/api/gallery", "/api/models"):
                 with urllib.request.urlopen(f"{base}{ep}", timeout=5) as r:
@@ -243,7 +261,52 @@ class TestWebStudioServer(unittest.TestCase):
                     data = json.loads(r.read().decode("utf-8"))
                     self.assertIsInstance(data, dict)
 
-            req = urllib.request.Request(f"{base}/api/cancel", data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+            # Sensitive repo file must NEVER be exposed via /files/
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(f"{base}/files/.git/config", timeout=5)
+            self.assertEqual(ctx.exception.code, 404)
+
+            # POST without CSRF token must be rejected (403)
+            req_no_tok = urllib.request.Request(
+                f"{base}/api/cancel", data=b"{}", headers={"Content-Type": "application/json"}, method="POST"
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(req_no_tok, timeout=5)
+            self.assertEqual(ctx.exception.code, 403)
+
+            # Cross-origin POST must be rejected (403)
+            req_evil_orig = urllib.request.Request(
+                f"{base}/api/cancel",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-PicoVid-Token": state.csrf_token,
+                    "Origin": "https://evil.example",
+                },
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(req_evil_orig, timeout=5)
+            self.assertEqual(ctx.exception.code, 403)
+
+            # SVG upload (Stored XSS vector) must be rejected (400)
+            req_svg = urllib.request.Request(
+                f"{base}/api/upload",
+                data=json.dumps({"name": "xss.svg", "data_url": "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="}).encode(),
+                headers={"Content-Type": "application/json", "X-PicoVid-Token": state.csrf_token},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(req_svg, timeout=5)
+            self.assertEqual(ctx.exception.code, 400)
+
+            # Authorized POST succeeds
+            req = urllib.request.Request(
+                f"{base}/api/cancel",
+                data=b"{}",
+                headers={"Content-Type": "application/json", "X-PicoVid-Token": state.csrf_token},
+                method="POST",
+            )
             with urllib.request.urlopen(req, timeout=5) as r:
                 self.assertEqual(r.status, 200)
                 self.assertTrue(json.loads(r.read().decode("utf-8"))["ok"])

@@ -143,6 +143,7 @@ def get_missing_mode_files(
             "ltx23_distilled_connectors",
             "ltx23_distilled_video_vae",
             "ltx23_distilled_audio_vae",
+            "ltx23_spatial_upscaler_x2",
         ]
     elif engine == "5b" and mode in ("t2v", "i2v", "studio"):
         req_ids += ["wan22_ti2v_5b_turbo_q4", "umt5_xxl_q4_k_m", "wan22_vae"]
@@ -194,7 +195,12 @@ def ensure_mode_models_available(
         print(f"  - {item['path']} ({download_models.format_gb(int(item['expected_bytes']))})")
 
     if not (interactive or ui_console.is_interactive_tty()):
-        prof_hint = "fast-5b" if engine == "5b" else {"t2v": "t2v", "t2i": "t2i", "i2v": "i2v", "studio": "studio"}.get(mode, "t2v")
+        if engine == "ltx23":
+            prof_hint = "ltx23-studio" if mode == "studio" else "ltx23"
+        elif engine == "5b":
+            prof_hint = "fast-5b"
+        else:
+            prof_hint = {"t2v": "t2v", "t2i": "t2i", "i2v": "i2v", "studio": "studio"}.get(mode, "t2v")
         print(f"İndirmek için: py scripts/download_models.py --profile {prof_hint}", file=sys.stderr)
         return False
 
@@ -570,12 +576,14 @@ def resolve_ltx23_sd_cli(backend: str, explicit: pathlib.Path | None) -> pathlib
 
 
 def convert_webm_to_mp4(webm_path: pathlib.Path, mp4_path: pathlib.Path) -> str:
-    """Convert LTX-2.3 .webm (VP8 + PCM 48kHz stereo audio) to universal H.264 + AAC MP4."""
+    """Convert LTX-2.3 .webm (VP8 + PCM 48kHz stereo audio) to universal H.264 + AAC MP4 with BT.709 color tags."""
     ffmpeg, ff_label = resolve_ffmpeg()
     if ffmpeg:
         cmd = [
             ffmpeg, "-y", "-i", str(webm_path),
+            "-vf", "scale=out_color_matrix=bt709",
             "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p",
+            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",
             str(mp4_path),
@@ -601,6 +609,9 @@ def resolve_sd_cli(backend: str, explicit: pathlib.Path | None) -> pathlib.Path:
         pathlib.Path(f"build/sdcpp-{backend}/bin/sd-cli.exe"),
         pathlib.Path(f"build/sdcpp-{backend}/bin/sd-cli"),
         pathlib.Path("build/sdcpp-vulkan/bin/sd-cli.exe"),
+        pathlib.Path(f"engine/sd-{backend}-ltx2/sd-cli.exe"),
+        pathlib.Path("engine/sd-vulkan-ltx2/sd-cli.exe"),
+        pathlib.Path("engine/sd-vulkan-ltx2/sd-cli"),
     ]
     for c in candidates:
         resolved = resolve_project_path(c)
@@ -655,7 +666,9 @@ def convert_avi_to_mp4(avi_path: pathlib.Path, mp4_path: pathlib.Path) -> str:
     if ffmpeg:
         cmd = [
             ffmpeg, "-y", "-i", str(avi_path),
+            "-vf", "scale=out_color_matrix=bt709",
             "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p",
+            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
             "-movflags", "+faststart",
             str(mp4_path),
         ]
@@ -812,7 +825,7 @@ def run_t2i_first_frame(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="PicoVid v0.5.0: LTX-2.3 22B Distilled (Audio+Video T2V/I2V) + Z-Image-Turbo (4-6 GB VRAM, Vulkan + CUDA)"
+        description="PicoVid v0.6.0: LTX-2.3 22B Distilled (Audio+Video T2V/I2V) + Z-Image-Turbo (4-6 GB VRAM, Vulkan + CUDA)"
     )
     parser.add_argument("--engine", choices=["ltx23", "5b", "14b"], default="ltx23", help="Video engine: ltx23 (LTX-2.3 22B Distilled Audio+Video, default), 5b, or 14b")
     parser.add_argument("--no-audio", action="store_true", help="LTX-2.3 only: disable stereo audio generation")
@@ -1221,12 +1234,23 @@ def main() -> int:
         finally:
             shutil.rmtree(chain_dir, ignore_errors=True)
 
-    # First-run guard: if not --dry-run, offer automatic build for missing sd-cli & inline download for missing models
+    # First-run guard: if not --dry-run, verify engine binary (LTX-2.3 prebuilt first when is_ltx23) & missing models
     if not args.dry_run:
-        verified_cli = ensure_sd_cli_available(sd_cli, hw["backend"], interactive=interactive_mode)
-        if verified_cli is None:
-            return 2
-        sd_cli = verified_cli
+        if is_ltx23 and mode in ("t2v", "i2v"):
+            ltx_probe_cli = resolve_ltx23_sd_cli(hw["backend"], args.sd_cli)
+            if not ltx_probe_cli.exists():
+                print(
+                    f"HATA: LTX-2.3 motoru bulunamadı: {ltx_probe_cli}\n"
+                    f"Kurulum için: setup.cmd veya engine/sd-vulkan-ltx2/sd-cli.exe",
+                    file=sys.stderr,
+                )
+                return 2
+            sd_cli = ltx_probe_cli
+        else:
+            verified_cli = ensure_sd_cli_available(sd_cli, hw["backend"], interactive=interactive_mode)
+            if verified_cli is None:
+                return 2
+            sd_cli = verified_cli
         if args.diffusion_model is None and args.high_noise_model is None:
             if not ensure_mode_models_available(mode, reg, args.i2v_variant, args.fast_preview, interactive=interactive_mode, engine=engine):
                 return 2
@@ -1356,6 +1380,13 @@ def main() -> int:
             and (args.height // 2) % 32 == 0
             and (ltx_upscaler_file.exists() or args.dry_run)
         )
+        if not args.no_hires_x2 and not can_hires_x2 and not args.dry_run:
+            if (args.width // 2) % 32 != 0 or (args.height // 2) % 32 != 0:
+                print(
+                    f"[PicoVid LTX-2.3] Not: {args.width}x{args.height} yarı boyutu 32'nin katı değil; "
+                    f"Hires-x2 devre dışı (2x hız için 768x448 veya 640x384 önerilir).",
+                    file=sys.stderr,
+                )
         gen_w = (args.width // 2) if can_hires_x2 else args.width
         gen_h = (args.height // 2) if can_hires_x2 else args.height
 
@@ -1378,6 +1409,10 @@ def main() -> int:
             "--vae-tile-overlap", "0.15",
             "--temporal-tiling",
         ]
+        if hw["backend"] == "vulkan":
+            ltx_cmd += ["--flash-attn", "off"]
+        if use_postprocess:
+            ltx_cmd += ["--compression-quality", "100"]
         if can_hires_x2:
             ltx_cmd += [
                 "--hires-upscalers-dir", str(ltx_upscaler_file.parent),
@@ -1399,6 +1434,8 @@ def main() -> int:
             "audio_enabled": use_audio,
             "max_vram": ltx_max_vram,
             "vae_tile_size": ltx_tile_size,
+            "flash_attn": "off" if hw["backend"] == "vulkan" else "auto",
+            "compression_quality": 100 if use_postprocess else 90,
             "cinema_hd": {"enabled": use_postprocess, "upscale": args.upscale, "rife": args.rife, "upscale_model": args.upscale_model},
             "sigmas": LTX23_DISTILLED_SIGMAS,
             "hires_sigmas": LTX23_HIRES_SIGMAS if can_hires_x2 else None,
@@ -1428,26 +1465,34 @@ def main() -> int:
             flush=True,
         )
         t0_ltx = time.monotonic()
-        with log_path.open("w", encoding="utf-8", errors="replace") as lf:
-            lf.write("=== PicoVid LTX-2.3 Distilled v1.1 Run Log ===\n")
-            lf.write(json.dumps(ltx_plan, indent=2, ensure_ascii=False) + "\n\n")
-            lf.flush()
-            proc_ltx = subprocess.Popen(
-                ltx_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=0,
-            )
-            assert proc_ltx.stdout is not None
-            for line in ui_console.iter_stream_lines(proc_ltx.stdout):
-                lf.write(line + "\n")
+        # Background page-cache prewarm for the 13.2 GiB LTX DiT while Gemma-3 encodes the prompt (saves ~60s on cold Step-1)
+        ltx_prewarm_stop = threading.Event()
+        ltx_prewarm_thr = start_file_prewarm([ltx_dit], ltx_prewarm_stop)
+        try:
+            with log_path.open("w", encoding="utf-8", errors="replace") as lf:
+                lf.write("=== PicoVid LTX-2.3 Distilled v1.1 Run Log ===\n")
+                lf.write(json.dumps(ltx_plan, indent=2, ensure_ascii=False) + "\n\n")
                 lf.flush()
-                if echo_raw or any(k in line for k in ("/8 -", "sampling", "vae decode", "audio vae", "save result", "[E]")):
-                    print(line, flush=True)
-            rc_ltx = proc_ltx.wait()
+                proc_ltx = subprocess.Popen(
+                    ltx_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=0,
+                )
+                assert proc_ltx.stdout is not None
+                for line in ui_console.iter_stream_lines(proc_ltx.stdout):
+                    lf.write(line + "\n")
+                    lf.flush()
+                    if echo_raw or any(k in line for k in ("/8 -", "/3 -", "hires", "sampling", "vae decode", "audio vae", "save result", "[E]")):
+                        print(line, flush=True)
+                rc_ltx = proc_ltx.wait()
+        finally:
+            ltx_prewarm_stop.set()
+            if ltx_prewarm_thr is not None:
+                ltx_prewarm_thr.join(timeout=1.5)
 
         if rc_ltx != 0 or not raw_webm.exists():
             print(f"HATA: LTX-2.3 üretimi başarısız (exit={rc_ltx}). Detay: {log_path}", file=sys.stderr)

@@ -15,6 +15,7 @@ Licensed under the Apache License, Version 2.0.
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import shutil
 import subprocess
@@ -73,6 +74,21 @@ def _download_zip(url: str, dest_zip: pathlib.Path, label: str) -> bool:
     return p.returncode == 0 and dest_zip.exists()
 
 
+def _safe_extract_zip(zf: zipfile.ZipFile, dest_dir: pathlib.Path) -> None:
+    """Extract zip safely, blocking Zip-Slip path traversal outside dest_dir."""
+    dest_root = dest_dir.resolve()
+    for member in zf.infolist():
+        rel = member.filename.replace("\\", "/")
+        if not rel or rel.endswith("/"):
+            continue
+        target = (dest_root / rel).resolve()
+        if not target.is_relative_to(dest_root):
+            raise ValueError(f"Zip-Slip engellendi: {member.filename}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(member) as src, target.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+
+
 def install_realesrgan() -> bool:
     if realesrgan_exe().exists() and (REALESRGAN_DIR / "models").exists():
         return True
@@ -82,7 +98,7 @@ def install_realesrgan() -> bool:
         return False
     try:
         with zipfile.ZipFile(tmp_zip, "r") as zf:
-            zf.extractall(REALESRGAN_DIR)
+            _safe_extract_zip(zf, REALESRGAN_DIR)
         # Flatten if extracted inside a single subfolder
         if not realesrgan_exe().exists():
             for exe in REALESRGAN_DIR.rglob("realesrgan-ncnn-vulkan.exe"):
@@ -110,6 +126,7 @@ def install_rife() -> bool:
         return False
     try:
         # Extract ONLY executable, DLLs, and rife-v4.6 (~15 MB on disk instead of 411 MB!)
+        rife_root = RIFE_DIR.resolve()
         with zipfile.ZipFile(tmp_zip, "r") as zf:
             for member in zf.infolist():
                 norm = member.filename.replace("\\", "/")
@@ -123,7 +140,9 @@ def install_rife() -> bool:
                 )
                 if not keep:
                     continue
-                target = RIFE_DIR / rel
+                target = (rife_root / rel).resolve()
+                if not target.is_relative_to(rife_root):
+                    raise ValueError(f"Zip-Slip engellendi: {member.filename}")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member) as src, target.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
@@ -264,8 +283,10 @@ def stitch_video_segments(
                 ff, "-y",
                 "-framerate", f"{fps:.3f}",
                 "-i", str(seq_dir / "%08d.png"),
+                "-vf", "scale=out_color_matrix=bt709",
                 "-c:v", "libx264", "-profile:v", "high",
                 "-crf", str(crf), "-pix_fmt", "yuv420p",
+                "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
                 "-movflags", "+faststart",
                 str(output_video),
             ]
@@ -544,6 +565,7 @@ def build_timeline_video(
         "-filter_complex", "".join(fc_parts),
         "-map", v_final,
         "-c:v", "libx264", "-profile:v", "high", "-crf", str(crf), "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
     ]
     if a_final:
         cmd += ["-map", a_final, "-c:a", "aac", "-b:a", "192k"]
@@ -650,8 +672,12 @@ def enhance_video(
                     im2 = cv2.resize(im, (in_w * 2, in_h * 2), interpolation=cv2.INTER_AREA)
                     cv2.imwrite(str(png), im2)
 
+            prev_dir = cur_dir
             cur_dir = up_dir
             cur_w, cur_h = in_w * upscale_factor, in_h * upscale_factor
+            # Free previous temp frames immediately to halve peak disk usage
+            if prev_dir != cur_dir:
+                shutil.rmtree(prev_dir, ignore_errors=True)
 
         # Step 2: 2x Frame Interpolation (16fps -> 32fps)
         # Uses Vulkan RIFE v4.6 if installed, otherwise zero-download FFmpeg bidirectional AOBMC optical-flow!
@@ -677,21 +703,24 @@ def enhance_video(
                 rf_sec = time.monotonic() - t_rf
                 produced = sorted(rf_dir.glob("*.png"))
                 if p_rf.returncode == 0 and produced:
+                    prev_dir = cur_dir
                     cur_dir = rf_dir
                     cur_fps = in_fps * rife_factor
                     out_frames = len(produced)
                     interp_backend = "rife_vulkan"
+                    if prev_dir != cur_dir:
+                        shutil.rmtree(prev_dir, ignore_errors=True)
                 else:
                     use_ffmpeg_mci = True
             else:
                 use_ffmpeg_mci = True
 
-        # Step 3: High-Profile H.264 MP4 Encode (CRF 15, + optional AOBMC optical-flow 32fps)
+        # Step 3: High-Profile H.264 MP4 Encode (CRF 15, BT.709 color tags, zero-copy rename into seq_dir)
         pngs = sorted(cur_dir.glob("*.png"))
         seq_dir = work / "04_seq"
         seq_dir.mkdir(parents=True, exist_ok=True)
         for i, p in enumerate(pngs, start=1):
-            shutil.copyfile(p, seq_dir / f"{i:08d}.png")
+            os.replace(p, seq_dir / f"{i:08d}.png")
 
         output_mp4.parent.mkdir(parents=True, exist_ok=True)
         keep_audio = has_audio_stream(input_video, ff)
@@ -709,13 +738,14 @@ def enhance_video(
                 progress_cb(72.0, f"2× Optik Akış İnterpolasyonu ({cur_w}x{cur_h} @ {target_fps:.0f}fps) + H.264...")
             t_rf = time.monotonic()
             cmd_ff += [
-                "-vf", f"minterpolate=fps={target_fps:.0f}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
+                "-vf", f"minterpolate=fps={target_fps:.0f}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,scale=out_color_matrix=bt709",
             ]
             cur_fps = target_fps
             interp_backend = "ffmpeg_aobmc"
         else:
             if progress_cb:
                 progress_cb(88.0, f"H.264 MP4 kodlanıyor ({cur_w}x{cur_h} @ {cur_fps:.0f}fps, CRF {crf})...")
+            cmd_ff += ["-vf", "scale=out_color_matrix=bt709"]
 
         if keep_audio:
             cmd_ff += ["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest"]
@@ -725,6 +755,10 @@ def enhance_video(
             "-profile:v", "high",
             "-crf", str(crf),
             "-pix_fmt", "yuv420p",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-color_range", "tv",
             "-movflags", "+faststart",
             str(output_mp4),
         ]

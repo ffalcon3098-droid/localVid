@@ -17,10 +17,10 @@ if "%PY_CMD%"=="" (
     exit /b %errorlevel%
 )
 
-if not exist "build\sdcpp-vulkan\bin\sd-cli.exe" if not exist "build\sdcpp-cuda\bin\sd-cli.exe" (
+if not exist "engine\sd-vulkan-ltx2\sd-cli.exe" if not exist "engine\sd-cuda-ltx2\sd-cli.exe" if not exist "build\sdcpp-vulkan\bin\sd-cli.exe" if not exist "build\sdcpp-cuda\bin\sd-cli.exe" (
     if "%~1"=="" (
         echo.
-        echo [PicoVid] Ilk acilis tespit edildi ^(derlenmis motor henuz yok^).
+        echo [PicoVid] Ilk acilis tespit edildi ^(motor henuz kurulu degil^).
         set /p "PV_SETUP=Sifirdan otomatik kurulumu ^(setup.cmd^) simdi calistiralim mi? [E/h]: "
         if /i "%PV_SETUP%"=="" set "PV_SETUP=E"
         if /i "%PV_SETUP%"=="E" (
@@ -46,7 +46,7 @@ if not %errorlevel%==0 (
 
 if /i "%~1"=="--web" (
     shift
-    %PY_CMD% scripts\web_ui.py %2 %3 %4 %5 %6 %7 %8 %9
+    %PY_CMD% scripts\web_ui.py %1 %2 %3 %4 %5 %6 %7 %8 %9
     exit /b %errorlevel%
 )
 
