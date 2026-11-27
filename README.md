@@ -5,6 +5,8 @@
 
 **[English](README.md) · [Türkçe](README.tr.md)** · **Platform:** Windows 10/11 (x64) · **GPUs:** AMD Radeon (Vulkan), NVIDIA GeForce GTX/RTX (CUDA & Vulkan), Intel Arc (Vulkan)
 
+> **Status / Known Limitations (Beta):** Physically verified on **AMD Radeon RX 5600 XT (6 GB VRAM) + 32 GB RAM (Windows 11)**. NVIDIA CUDA setup uses backend-agnostic `ggml` flags and `sd.cpp` CUDA paths, but is **community-tested only**; currently **Windows 10/11 x64 only**. Open a GitHub Issue with `py scripts/probe_hardware.py` output if you hit any issue.
+
 > **Run flagship 22B Audio+Video diffusion (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Audio), fast 5-second `Wan 2.2 TI2V-5B Turbo`, & `Z-Image-Turbo` on ordinary 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — featuring an English-first Local Web Studio & CLI, 2-stage native x2 spatial latent upscaling, 4.3×–11.6× faster tiled Video VAE, Audio-Preserving Cinema HD (`1280×768 @ 32fps`), and a Multi-Clip Timeline Editor (`xfade` + stereo `acrossfade`).**
 
 <p align="center">
@@ -254,11 +256,4 @@ py scripts/generate.py --mode studio -p "test" -W 832 -H 480 -f 33 --dry-run
   - `Gemma 3 12B`: **Gemma Terms of Use** (Google)
   - `TAEHV` & `rife-ncnn-vulkan`: **MIT** · `realesrgan-ncnn-vulkan`: **BSD-3-Clause**
 - Built on top of [`leejet/stable-diffusion.cpp`](https://github.com/leejet/stable-diffusion.cpp) and [`ggml`](https://github.com/ggml-org/ggml).
-
----
-
-## License & Acknowledgments
-
-- **PicoVid** is released under the **[Apache License 2.0](LICENSE)**.
-- Built on [`leejet/stable-diffusion.cpp`](https://github.com/leejet/stable-diffusion.cpp) and [`ggml`](https://github.com/ggml-org/ggml).
 - Memory optimization research inspired in part by [`alexturkey/VideoTurko`](https://github.com/alexturkey/VideoTurko)'s low-VRAM patch methodology.

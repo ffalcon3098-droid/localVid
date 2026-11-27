@@ -5,6 +5,8 @@
 
 **[English](README.md) · [Türkçe](README.tr.md)** · **Platform:** Windows 10/11 (x64) · **GPU Desteği:** AMD Radeon (Vulkan), NVIDIA GeForce GTX/RTX (CUDA & Vulkan), Intel Arc (Vulkan)
 
+> **Durum / Bilinen Sınırlar (Beta):** Fiziksel testler **AMD Radeon RX 5600 XT (6 GB VRAM) + 32 GB RAM (Windows 11)** üzerinde doğrulandı. NVIDIA CUDA kurulumu backend-bağımsız `ggml` hatlarını kullanır ancak henüz **topluluk testine açıktır**; şimdilik **yalnızca Windows 10/11 x64** desteklenir. Sorun bildirimi için lütfen `py scripts/probe_hardware.py` çıktısıyla GitHub Issue açın.
+
 > **Amiral gemisi 22B Ses + Video üretim modelini (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Ses), hızlı 5 saniyelik `Wan 2.2 TI2V-5B Turbo`'yu ve `Z-Image-Turbo`'yu sıradan 4–6 GB VRAM'li kartlarda (AMD Vulkan & NVIDIA CUDA) çalıştırır — İngilizce varsayılan Web Stüdyosu & CLI, 2-aşamalı natif x2 latent yükseltme, 4.3×–11.6× daha hızlı Video VAE, Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ve Çoklu Klip Zaman Çizelgesi (`xfade` + stereo `acrossfade`) içerir.**
 
 <p align="center">
