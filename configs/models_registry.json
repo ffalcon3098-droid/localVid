@@ -36,6 +36,13 @@
       "license": "ltx-community",
       "desc": "LTX-2.3 Distilled Audio VAE 48kHz Stereo (0.34 GiB)"
     },
+    "ltx23_spatial_upscaler_x2": {
+      "path": "models/latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+      "expected_bytes": 995743560,
+      "url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+      "license": "ltx-community",
+      "desc": "LTX-2.3 Native 2x Spatial Latent Upscaler v1.1 (0.93 GiB, fast 2-stage hires)"
+    },
     "wan22_ti2v_5b_turbo_q4": {
       "path": "models/diffusion_models/Wan2_2-TI2V-5B-Turbo-Q4_K_M.gguf",
       "expected_bytes": 3437927136,
@@ -244,13 +251,13 @@
   },
   "download_profiles": {
     "ltx23": {
-      "desc": "LTX-2.3 22B Distilled v1.1 Audio+Video (T2V+I2V, 8-step, 23.16 GiB)",
-      "required": ["ltx23_distilled_q4_k_m", "gemma3_12b_qat_iq4_xs", "ltx23_distilled_connectors", "ltx23_distilled_video_vae", "ltx23_distilled_audio_vae"],
+      "desc": "LTX-2.3 22B Distilled v1.1 Audio+Video + Native x2 Latent Upscaler (T2V+I2V, 24.09 GiB)",
+      "required": ["ltx23_distilled_q4_k_m", "gemma3_12b_qat_iq4_xs", "ltx23_distilled_connectors", "ltx23_distilled_video_vae", "ltx23_distilled_audio_vae", "ltx23_spatial_upscaler_x2"],
       "optional": []
     },
     "ltx23-studio": {
-      "desc": "LTX-2.3 Studio: Z-Image-Turbo (T2I) + LTX-2.3 22B Distilled Audio+Video (I2V)",
-      "required": ["z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae", "ltx23_distilled_q4_k_m", "gemma3_12b_qat_iq4_xs", "ltx23_distilled_connectors", "ltx23_distilled_video_vae", "ltx23_distilled_audio_vae"],
+      "desc": "LTX-2.3 Studio: Z-Image-Turbo (T2I) + LTX-2.3 22B Distilled Audio+Video + x2 Upscaler",
+      "required": ["z_image_turbo_q4_k", "qwen3_4b_q4_k_m", "flux_ae", "ltx23_distilled_q4_k_m", "gemma3_12b_qat_iq4_xs", "ltx23_distilled_connectors", "ltx23_distilled_video_vae", "ltx23_distilled_audio_vae", "ltx23_spatial_upscaler_x2"],
       "optional": []
     },
     "fast-5b": {

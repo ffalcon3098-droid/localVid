@@ -368,6 +368,203 @@ def concat_av_clips(
     }
 
 
+TIMELINE_TRANSITIONS = (
+    "dissolve",
+    "fadeblack",
+    "wipeleft",
+    "wiperight",
+    "smoothleft",
+    "slideleft",
+    "circleopen",
+    "cut",
+)
+
+
+def probe_media_info(video_path: pathlib.Path, ff: str | None = None) -> dict[str, object]:
+    """Probe duration, width, height, fps, and audio presence via ffmpeg stderr."""
+    import re
+    import cv2
+
+    exe = ff or resolve_ffmpeg()
+    cap = cv2.VideoCapture(str(video_path))
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 16.0)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 384)
+    cap.release()
+    dur = n / max(fps, 1.0)
+    has_audio = False
+    if exe and video_path.exists():
+        try:
+            p = subprocess.run(
+                [exe, "-i", str(video_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            err = p.stderr or ""
+            has_audio = "Audio:" in err
+            m = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", err)
+            if m:
+                dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+        except Exception:
+            pass
+    return {"duration": round(dur, 3), "width": w, "height": h, "fps": round(fps, 2), "frames": n, "has_audio": has_audio}
+
+
+def build_timeline_video(
+    clips: list[dict[str, object]],
+    output_mp4: pathlib.Path,
+    *,
+    transition: str = "dissolve",
+    transition_sec: float = 0.6,
+    target_width: int | None = None,
+    target_height: int | None = None,
+    target_fps: float | None = None,
+    crf: int = 15,
+) -> dict[str, object]:
+    """Assemble a multi-clip video timeline with smooth xfade video + acrossfade stereo audio transitions.
+
+    Each item in `clips`: {"path": Path|str, "start": float (opt), "end": float (opt), "transition": str (opt)}.
+    Handles mixed resolutions, mixed FPS, and mixed silent/audio clips gracefully (injects silent stereo where needed).
+    """
+    ff = resolve_ffmpeg()
+    if not ff:
+        raise RuntimeError("ffmpeg / imageio-ffmpeg bulunamadı.")
+    if not clips:
+        raise ValueError("Zaman çizelgesi için en az 1 klip gerekli.")
+
+    trans_default = transition if transition in TIMELINE_TRANSITIONS else "dissolve"
+    trans_d = max(0.0, min(2.0, float(transition_sec)))
+
+    norm_clips: list[dict[str, object]] = []
+    for item in clips:
+        p = pathlib.Path(str(item["path"])).resolve()
+        if not p.exists():
+            raise FileNotFoundError(f"Klip bulunamadı: {p}")
+        info = probe_media_info(p, ff)
+        st = max(0.0, float(item.get("start") or 0.0))
+        raw_dur = float(info["duration"])
+        en_val = item.get("end")
+        en = min(raw_dur, float(en_val)) if (en_val is not None and float(en_val) > st) else raw_dur
+        eff_dur = max(0.25, en - st)
+        tr = str(item.get("transition") or trans_default)
+        if tr not in TIMELINE_TRANSITIONS:
+            tr = trans_default
+        norm_clips.append({
+            "path": p,
+            "start": st,
+            "end": en,
+            "duration": eff_dur,
+            "width": int(info["width"]),
+            "height": int(info["height"]),
+            "fps": float(info["fps"]),
+            "has_audio": bool(info["has_audio"]),
+            "transition": tr,
+        })
+
+    out_w = int(target_width or norm_clips[0]["width"])
+    out_h = int(target_height or norm_clips[0]["height"])
+    # Ensure H.264 even dimensions
+    out_w = max(64, (out_w // 2) * 2)
+    out_h = max(64, (out_h // 2) * 2)
+    out_fps = float(target_fps or max(c["fps"] for c in norm_clips))
+    any_audio = any(c["has_audio"] for c in norm_clips)
+
+    output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    cmd: list[str] = [ff, "-y"]
+    for c in norm_clips:
+        if c["start"] > 0.0:
+            cmd += ["-ss", f"{c['start']:.3f}"]
+        cmd += ["-t", f"{c['duration']:.3f}", "-i", str(c["path"])]
+
+    n = len(norm_clips)
+    fc_parts: list[str] = []
+    for i, c in enumerate(norm_clips):
+        fc_parts.append(
+            f"[{i}:v:0]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2,fps={out_fps:.3f},setsar=1,format=yuv420p[v{i}];"
+        )
+        if any_audio:
+            if c["has_audio"]:
+                fc_parts.append(
+                    f"[{i}:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}];"
+                )
+            else:
+                fc_parts.append(
+                    f"anullsrc=r=48000:cl=stereo:d={c['duration']:.3f}[a{i}];"
+                )
+
+    if n == 1:
+        v_final = "[v0]"
+        a_final = "[a0]" if any_audio else None
+        total_dur = float(norm_clips[0]["duration"])
+    elif trans_default == "cut" or trans_d < 0.05:
+        if any_audio:
+            cin = "".join(f"[v{i}][a{i}]" for i in range(n))
+            fc_parts.append(f"{cin}concat=n={n}:v=1:a=1[vout][aout]")
+            v_final, a_final = "[vout]", "[aout]"
+        else:
+            cin = "".join(f"[v{i}]" for i in range(n))
+            fc_parts.append(f"{cin}concat=n={n}:v=1:a=0[vout]")
+            v_final, a_final = "[vout]", None
+        total_dur = sum(float(c["duration"]) for c in norm_clips)
+    else:
+        cur_v = "[v0]"
+        cur_a = "[a0]"
+        cur_dur = float(norm_clips[0]["duration"])
+        for i in range(1, n):
+            nxt_dur = float(norm_clips[i]["duration"])
+            d_step = min(trans_d, cur_dur * 0.45, nxt_dur * 0.45)
+            d_step = max(0.1, round(d_step, 3))
+            offset = max(0.05, round(cur_dur - d_step, 3))
+            tr_name = str(norm_clips[i]["transition"])
+            if tr_name == "cut":
+                tr_name = "fade"
+                d_step = 0.04
+                offset = max(0.05, round(cur_dur - d_step, 3))
+            out_v = f"[vx{i}]"
+            fc_parts.append(f"{cur_v}[v{i}]xfade=transition={tr_name}:duration={d_step:.3f}:offset={offset:.3f}{out_v};")
+            cur_v = out_v
+            if any_audio:
+                out_a = f"[ax{i}]"
+                fc_parts.append(f"{cur_a}[a{i}]acrossfade=d={d_step:.3f}:c1=tri:c2=tri{out_a};")
+                cur_a = out_a
+            cur_dur = offset + nxt_dur
+        # Strip trailing semicolon on last filter
+        fc_parts[-1] = fc_parts[-1].rstrip(";")
+        v_final = cur_v
+        a_final = cur_a if any_audio else None
+        total_dur = cur_dur
+
+    cmd += [
+        "-filter_complex", "".join(fc_parts),
+        "-map", v_final,
+        "-c:v", "libx264", "-profile:v", "high", "-crf", str(crf), "-pix_fmt", "yuv420p",
+    ]
+    if a_final:
+        cmd += ["-map", a_final, "-c:a", "aac", "-b:a", "192k"]
+    cmd += ["-movflags", "+faststart", str(output_mp4)]
+
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    if p.returncode != 0 or not output_mp4.exists():
+        raise RuntimeError(f"ffmpeg zaman çizelgesi kurgusu başarısız: {p.stderr[-500:]}")
+    return {
+        "output_mp4": str(output_mp4),
+        "clips": n,
+        "transition": trans_default,
+        "transition_sec": trans_d,
+        "resolution": f"{out_w}x{out_h}",
+        "fps": round(out_fps, 2),
+        "duration_sec": round(total_dur, 2),
+        "audio_preserved": any_audio,
+        "size_mb": round(output_mp4.stat().st_size / (1024 * 1024), 2),
+    }
+
+
 def extract_video_frames(video_path: pathlib.Path, out_dir: pathlib.Path) -> tuple[int, float, int, int]:
     """Extract lossless PNG frames from AVI/MP4 and return (count, fps, width, height)."""
     import cv2

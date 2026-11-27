@@ -1,8 +1,43 @@
-# PicoVid
+# PicoVid v0.5.0
 
 **[English](README.md) · [Türkçe](README.tr.md)**
 
-> **Run flagship 14B video diffusion models (Wan 2.2 T2V + I2V + Z-Image-Turbo Studio) on 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — crash-free, up to 9.28× faster than stock, and up to 81 frames (5.1s @ 640×384) — Apache 2.0 licensed.**
+> **Run flagship 22B Audio+Video diffusion (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Audio) & `Z-Image-Turbo` on 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — featuring 2-stage native x2 spatial latent upscaling, 4.3×–11.6× faster tiled Video VAE, Audio-Preserving Cinema HD (`1280×768 @ 32fps`), and a Multi-Clip Timeline Editor (`xfade` + stereo `acrossfade`).**
+
+## What's New in v0.5.0 (LTX-2.3 22B Audio+Video Engine)
+
+- **LTX-2.3 22B Distilled v1.1 (Default `--engine ltx23`):** Generates razor-sharp cinematic video **AND synchronized 48 kHz Stereo Audio** in 8 distilled steps (`DISTILLED_SIGMA_VALUES`) on a **6 GB AMD RX 5600 XT (Vulkan, 32 GB RAM)** via prebuilt `stable-diffusion.cpp` (`master-1133-52491bd`, zero C++ compilation needed!).
+- **Empirically Tuned 6 GB VRAM Pipeline (`~2.1×` Faster + Higher Sharpness, Zero Deadlocks):**
+  - `--max-vram -1.4 --disable-prefetch`: Eliminates `6.15 GiB` WDDM Shared VRAM spill (`1.51×` faster DiT) while avoiding multi-segment async-prefetch deadlocks on `49f–81f`.
+  - `--vae-tile-size 384x384 --vae-tile-overlap 0.15`: Cuts Video VAE decode by **`4.3×–11.6×`** (`110.1s → 25.7s` on 17f; `149.3s → 12.8s` on 25f) at **`41.31 dB PSNR`**.
+  - **Auto 2-Stage Native x2 Spatial Latent Upscaler (`ltx-2.3-spatial-upscaler-x2-1.1.safetensors`):** Runs 8 base steps at half-res (`320×192` → `640×384`, or `384×224` → `768×448`) + 3 refine steps (`STAGE_2_DISTILLED_SIGMA_VALUES`), delivering **`1.41×–2.0×` additional speedup** AND noticeably sharper, more coherent object anatomy!
+- **Audio-Preserving Cinema HD (`postprocess.py`):** 2× Vulkan Real-ESRGAN (`1280×768`) + 32 fps optical-flow/RIFE interpolation now automatically detects and preserves LTX-2.3's 48 kHz Stereo AAC soundtrack.
+- **Multi-Clip Video Timeline & Transitions (`web_ui.py` & `postprocess.build_timeline_video`):** Queue clips in the Web Studio (`http://127.0.0.1:7860`), reorder them, pick `xfade` transitions (`dissolve`, `fadeblack`, `wipeleft`, `smoothleft`, `circleopen`, `cut`) with synchronized stereo `acrossfade`, and render one unified MP4.
+
+### LTX-2.3 22B Measured Benchmarks (AMD RX 5600 XT 6 GB Vulkan, Windows 11, 32 GB RAM)
+
+| Config (`LTX-2.3 22B Distilled 1.1 Q4_K_M + Gemma-3-12B`) | Output | DiT Time | Video VAE | Audio VAE | Total | Notes |
+|---|---|---:|---:|---:|---:|---|
+| Baseline (`--max-vram 0`, `256×256` tile) | `640×384 × 17f` | `959.5 s` | `110.1 s` | `4.0 s` | `1190.7 s` | `6.95 GiB` Shared spill |
+| Optimized (`--max-vram -1.4`, `384×384` tile) | `640×384 × 17f` | **`636.5 s`** (`1.51×`) | **`25.7 s`** (`4.28×`) | `4.0 s` | **`775.7 s`** (`1.54×`) | `41.31 dB PSNR` |
+| Safe Single-Stage (`--max-vram -1.4 --disable-prefetch`) | `640×384 × 25f` | `766.6 s` | **`12.8 s`** | `3.9 s` | `880.9 s` | Zero deadlock |
+| **Auto 2-Stage Native x2 Upscaler (`320×192 → 640×384`)** | **`640×384 × 25f`** | **`542.8 s`** (`288s + 255s`) | **`12.5 s`** | **`4.0 s`** | **`699.6 s`** | **Fastest + sharpest anatomy** |
+| Full 5-Second Clip + Audio-Preserving Cinema HD | `1280×768 × 81→160f @ 32fps` | — | — | `24.4 s` | — | Verified across 5×5s Showreel (`22.45s` xfade MP4) |
+
+```powershell
+# One-click Windows setup (downloads prebuilt LTX-2.3 Vulkan binary + Cinema HD + models, no VS needed!)
+.\setup.cmd
+
+# Launch PicoVid v0.5.0 Web Studio (LTX-2.3 T2V/I2V/Studio + Multi-Clip Timeline Editor)
+.\web-studio.cmd
+
+# CLI: 5-second LTX-2.3 Audio+Video with Auto 2-Stage x2 Upscaler + Audio-Preserving Cinema HD (1280x768 @ 32fps)
+py scripts/generate.py --engine ltx23 --mode t2v --cinema-hd -p "Two F-16 fighter jets flying over the illuminated Istanbul Bosphorus Bridge at dusk, roaring jet afterburners" -W 640 -H 384 -f 81 --fps 16 -o istanbul_f16_hd32.mp4
+```
+
+---
+
+## Historical Wan 2.2 Low-VRAM Patch Research (`v0.1–v0.4`)
 
 ![Wan 2.2 14B 640x384 4-step output on AMD RX 5600 XT 6GB Vulkan](docs/media/wan22_640x384_33f_frame12_rx5600xt.png)
 *Generated locally on an **AMD Radeon RX 5600 XT (6 GB VRAM, Vulkan, Windows 11)** — `640×384`, 33 frames (2.1s), 4 steps (`wan2.2-t2v-rapid-aio-v10-Q4_K`), real Wan 2.1 VAE, ~8.5 min end-to-end.*

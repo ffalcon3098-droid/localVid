@@ -551,6 +551,7 @@ def resolve_project_path(p: pathlib.Path) -> pathlib.Path:
 
 
 LTX23_DISTILLED_SIGMAS = "1.0,0.99375,0.9875,0.98125,0.975,0.909375,0.725,0.421875,0.0"
+LTX23_HIRES_SIGMAS = "0.909375,0.725,0.421875,0.0"
 
 
 def resolve_ltx23_sd_cli(backend: str, explicit: pathlib.Path | None) -> pathlib.Path:
@@ -815,6 +816,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--engine", choices=["ltx23", "5b", "14b"], default="ltx23", help="Video engine: ltx23 (LTX-2.3 22B Distilled Audio+Video, default), 5b, or 14b")
     parser.add_argument("--no-audio", action="store_true", help="LTX-2.3 only: disable stereo audio generation")
+    parser.add_argument("--no-hires-x2", action="store_true", help="LTX-2.3 only: disable 2-stage native spatial latent upscaler x2 (force single-stage)")
     parser.add_argument("--mode", choices=["t2v", "i2v", "t2i", "studio"], default=None, help="Generation mode (default: t2v, or i2v if --init-img given)")
     parser.add_argument("-p", "--prompt", default=None, help="Text prompt (omit to open interactive wizard)")
     parser.add_argument("-i", "--init-img", type=pathlib.Path, default=None, help="Input first-frame image for I2V")
@@ -1341,10 +1343,26 @@ def main() -> int:
             ltx_cmd += ["--end-img", str(args.end_img.resolve())]
         ltx_max_vram = "-1.4" if hw["vram_class"] in ("4GB", "6GB") else "0"
         ltx_tile_size = "320x320" if hw["vram_class"] == "4GB" else "384x384"
+        ltx_upscaler_file = reg_file_path(
+            reg,
+            "ltx23_spatial_upscaler_x2",
+            "models/latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        )
+        can_hires_x2 = (
+            (not args.no_hires_x2)
+            and args.width >= 512
+            and args.height >= 320
+            and (args.width // 2) % 32 == 0
+            and (args.height // 2) % 32 == 0
+            and (ltx_upscaler_file.exists() or args.dry_run)
+        )
+        gen_w = (args.width // 2) if can_hires_x2 else args.width
+        gen_h = (args.height // 2) if can_hires_x2 else args.height
+
         ltx_cmd += [
             "-p", args.prompt,
-            "-W", str(args.width),
-            "-H", str(args.height),
+            "-W", str(gen_w),
+            "-H", str(gen_h),
             "--video-frames", str(args.frames),
             "--fps", str(args.fps),
             "--cfg-scale", str(args.cfg_scale),
@@ -1354,18 +1372,28 @@ def main() -> int:
             "--offload-to-cpu",
             "--mmap",
             "--max-vram", ltx_max_vram,
+            "--disable-prefetch",
             "--vae-tiling",
             "--vae-tile-size", ltx_tile_size,
             "--vae-tile-overlap", "0.15",
             "--temporal-tiling",
-            "-o", str(raw_webm),
         ]
+        if can_hires_x2:
+            ltx_cmd += [
+                "--hires-upscalers-dir", str(ltx_upscaler_file.parent),
+                "--hires-upscaler", ltx_upscaler_file.stem,
+                "--hires",
+                "--hires-sigmas", LTX23_HIRES_SIGMAS,
+            ]
+        ltx_cmd += ["-o", str(raw_webm)]
 
         ltx_plan: dict[str, Any] = {
             "engine": "ltx23",
             "mode": mode,
             "hardware": hw,
             "resolution": f"{args.width}x{args.height}",
+            "base_resolution": f"{gen_w}x{gen_h}",
+            "hires_x2": can_hires_x2,
             "frames": args.frames,
             "fps": args.fps,
             "audio_enabled": use_audio,
@@ -1373,6 +1401,7 @@ def main() -> int:
             "vae_tile_size": ltx_tile_size,
             "cinema_hd": {"enabled": use_postprocess, "upscale": args.upscale, "rife": args.rife, "upscale_model": args.upscale_model},
             "sigmas": LTX23_DISTILLED_SIGMAS,
+            "hires_sigmas": LTX23_HIRES_SIGMAS if can_hires_x2 else None,
             "cmd": ltx_cmd,
             "output_mp4": str(out_mp4),
         }

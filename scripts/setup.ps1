@@ -15,6 +15,7 @@ Set-Location $RepoRoot
 $ReleaseRepo = "ffalcon3098-droid/localVid"
 $ReleaseTag  = "v0.5.1"
 $PrebuiltAsset = "picovid-sd-cli-win64-vulkan.zip"
+$Ltx2PrebuiltUrl = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1133-52491bd/sd-master-52491bd-bin-win-vulkan-x64.zip"
 
 function Refresh-EnvPath {
     $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -318,10 +319,29 @@ if (-not $hasBin) {
     Write-Host "`n[4/5] sd-cli.exe zaten hazir." -ForegroundColor Green
 }
 
+# 4b. Install LTX-2.3 Vulkan prebuilt engine (29.6 MB, zero compilation needed!)
+$ltxDir = Join-Path $RepoRoot "engine\sd-vulkan-ltx2"
+$ltxExe = Join-Path $ltxDir "sd-cli.exe"
+if (-not (Test-Path $ltxExe)) {
+    Write-Host "`n[4b/5] LTX-2.3 Vulkan motoru indiriliyor (~30 MB, derleme gerekmez)..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path $ltxDir | Out-Null
+    $ltxZip = Join-Path $ltxDir "sd-ltx2-win-vulkan.zip"
+    curl.exe -fL --retry 3 -sS -o $ltxZip $Ltx2PrebuiltUrl
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $ltxZip)) {
+        Expand-Archive -Path $ltxZip -DestinationPath $ltxDir -Force
+        Remove-Item $ltxZip -Force -ErrorAction SilentlyContinue
+        Write-Host "  [OK] LTX-2.3 Vulkan motoru hazir: $ltxExe" -ForegroundColor Green
+    } else {
+        Write-Host "  [UYARI] LTX-2.3 Vulkan motoru indirilemedi; tekrar deneyebilirsiniz." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "`n[4b/5] LTX-2.3 Vulkan motoru zaten hazir." -ForegroundColor Green
+}
+
 # 5. Cinema HD Vulkan Upscaler (43 MB)
 if (-not $hasRealesrgan) {
     Write-Host "`n[5/5] Cinema HD Vulkan araci (realesrgan-ncnn-vulkan, 43 MB) indiriliyor..." -ForegroundColor Cyan
-    & $pyCmd (Join-Path $RepoRoot "scripts\postprocess.py") --install-only
+    & $pyCmd (Join-Path $RepoRoot "scripts\postprocess.py") --install-tools
 }
 
 # 6. Models
@@ -329,7 +349,7 @@ if (-not $SkipModels) {
     Write-Host "`n[Modeller] Akilli model indirici baslatiliyor..." -ForegroundColor Cyan
     if ($Profile -eq "auto") {
         if ($Yes) {
-            & $pyCmd (Join-Path $RepoRoot "scripts\download_models.py") --profile fast-5b
+            & $pyCmd (Join-Path $RepoRoot "scripts\download_models.py") --profile ltx23
         } else {
             & $pyCmd (Join-Path $RepoRoot "scripts\download_models.py") --interactive
         }

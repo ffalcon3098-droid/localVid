@@ -146,6 +146,8 @@ class TestCliDryRuns(unittest.TestCase):
         d = self._run_dry(["--engine", "ltx23", "--mode", "t2v", "-p", "cinematic ocean", "-W", "770", "-H", "450", "-f", "26", "--cinema-hd"])
         self.assertEqual(d["engine"], "ltx23")
         self.assertEqual(d["resolution"], "768x448")
+        self.assertEqual(d["base_resolution"], "384x224")
+        self.assertTrue(d["hires_x2"])
         self.assertEqual(d["frames"], 33)
         self.assertEqual(d["fps"], 24)
         self.assertTrue(d["audio_enabled"])
@@ -154,7 +156,9 @@ class TestCliDryRuns(unittest.TestCase):
         self.assertTrue(d["cinema_hd"]["enabled"])
         self.assertIn("--audio-vae", d["cmd"])
         self.assertIn("384x384", d["cmd"])
-        self.assertNotIn("--disable-prefetch", d["cmd"])
+        self.assertIn("--disable-prefetch", d["cmd"])
+        self.assertIn("--hires", d["cmd"])
+        self.assertIn(generate.LTX23_HIRES_SIGMAS, d["cmd"])
         self.assertIn(generate.LTX23_DISTILLED_SIGMAS, d["cmd"])
 
 
@@ -191,6 +195,32 @@ class TestPostprocessStitchAndLabAnchor(unittest.TestCase):
             self.assertEqual(res["total_frames"], 9)  # 5 + 5 - 1 duplicate boundary dropped
             self.assertTrue(out_mp4.exists())
             self.assertGreater(res["seam_psnr_db"][0], 30.0)
+
+    def test_timeline_xfade_with_stereo_audio(self) -> None:
+        ff = postprocess.resolve_ffmpeg()
+        if not ff:
+            self.skipTest("ffmpeg not available")
+        with tempfile.TemporaryDirectory(prefix="picovid_tl_") as td:
+            d = pathlib.Path(td)
+            c1, c2, out_mp4 = d / "c1.mp4", d / "c2.mp4", d / "timeline.mp4"
+            for clip, col, freq in ((c1, "blue", 330), (c2, "red", 440)):
+                subprocess.check_call([
+                    ff, "-y",
+                    "-f", "lavfi", "-i", f"color=c={col}:s=160x96:r=16:d=2.0",
+                    "-f", "lavfi", "-i", f"sine=frequency={freq}:sample_rate=48000:duration=2.0",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(clip),
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            res = postprocess.build_timeline_video(
+                [{"path": c1}, {"path": c2}],
+                out_mp4,
+                transition="dissolve",
+                transition_sec=0.5,
+            )
+            self.assertTrue(out_mp4.exists())
+            self.assertEqual(res["clips"], 2)
+            self.assertTrue(res["audio_preserved"])
+            self.assertAlmostEqual(float(res["duration_sec"]), 3.5, delta=0.25)
+            self.assertTrue(postprocess.has_audio_stream(out_mp4, ff))
 
 
 class TestWebStudioServer(unittest.TestCase):

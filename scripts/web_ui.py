@@ -44,6 +44,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import download_models  # noqa: E402
 import generate  # noqa: E402
+import postprocess  # noqa: E402
 import ui_console  # noqa: E402
 
 
@@ -519,6 +520,39 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent)}
       </div>
       <div class="gallery" id="gallery"></div>
     </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <strong style="font-size:14px">🎞 Zaman Çizelgesi (Çoklu Klip Kurgu &amp; Geçişler)</strong>
+        <button class="chip" onclick="clearTimeline()">Temizle</button>
+      </div>
+      <div id="tlList" style="display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:12px;color:var(--muted)">
+        Galerideki videolardan <b>+ Kurgu</b> ile klip ekleyin.
+      </div>
+      <div class="row2" style="margin-top:10px">
+        <div>
+          <label style="margin-top:0">Geçiş Efekti (xfade + stereo acrossfade)</label>
+          <select id="tlTrans">
+            <option value="dissolve" selected>Yumuşak Geçiş (Dissolve)</option>
+            <option value="fadeblack">Siyaha Kararma (Fade Black)</option>
+            <option value="wipeleft">Sola Silme (Wipe Left)</option>
+            <option value="smoothleft">Akıcı Kayma (Smooth Left)</option>
+            <option value="circleopen">İris Açılış (Circle Open)</option>
+            <option value="cut">Keskin Kesim (Cut)</option>
+          </select>
+        </div>
+        <div>
+          <label style="margin-top:0">Geçiş Süresi</label>
+          <select id="tlDur">
+            <option value="0.4">0.4 sn (Hızlı)</option>
+            <option value="0.6" selected>0.6 sn (Sinematik)</option>
+            <option value="1.0">1.0 sn (Yavaş)</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btnRenderTl" onclick="renderTimeline()" style="margin-top:10px">▶ Kurguyu Birleştir (Ses + Video MP4)</button>
+      <div id="tlStatus" style="font-size:12px;color:var(--accent);margin-top:6px"></div>
+    </div>
   </section>
 </main>
 
@@ -675,6 +709,60 @@ async function extendVideo(relPath, ev) {
   if (!d.ok) alert(d.error || 'Uzatma başlatılamadı');
 }
 
+let timelineClips = [];
+function addToTimeline(rel, name, ev) {
+  if (ev) ev.stopPropagation();
+  timelineClips.push({rel, name});
+  renderTimelineList();
+}
+function moveTimeline(i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= timelineClips.length) return;
+  const tmp = timelineClips[i]; timelineClips[i] = timelineClips[j]; timelineClips[j] = tmp;
+  renderTimelineList();
+}
+function removeTimeline(i) { timelineClips.splice(i, 1); renderTimelineList(); }
+function clearTimeline() { timelineClips = []; renderTimelineList(); document.getElementById('tlStatus').textContent = ''; }
+function renderTimelineList() {
+  const el = document.getElementById('tlList');
+  if (!timelineClips.length) {
+    el.innerHTML = 'Galerideki videolardan <b>+ Kurgu</b> ile klip ekleyin.';
+    return;
+  }
+  el.innerHTML = timelineClips.map((c, i) => `
+    <div style="display:flex;align-items:center;gap:6px;background:#0b1220;border:1px solid var(--border);border-radius:8px;padding:6px 9px">
+      <span style="color:var(--accent);font-weight:700">#${i+1}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)" title="${c.rel}">${c.name}</span>
+      <button class="ext-btn" onclick="moveTimeline(${i},-1)">▲</button>
+      <button class="ext-btn" onclick="moveTimeline(${i},1)">▼</button>
+      <button class="ext-btn" style="color:var(--err);border-color:rgba(248,113,113,.4)" onclick="removeTimeline(${i})">×</button>
+    </div>`).join('');
+}
+async function renderTimeline() {
+  if (timelineClips.length < 1) { alert('Önce zaman çizelgesine en az 1 video ekleyin.'); return; }
+  const btn = document.getElementById('btnRenderTl');
+  const st = document.getElementById('tlStatus');
+  btn.disabled = true; st.textContent = 'Kurgu birleştiriliyor (xfade + 48kHz stereo)...';
+  try {
+    const r = await fetch('/api/timeline/render', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        clips: timelineClips.map(c => ({rel: c.rel})),
+        transition: document.getElementById('tlTrans').value,
+        transition_sec: parseFloat(document.getElementById('tlDur').value)
+      })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      st.textContent = `✓ Hazır: ${d.name} (${d.duration_sec}s · ${d.resolution} · ${d.size_mb} MB)`;
+      showInPreview(d.url + '?t=' + Date.now(), 'video');
+      loadGallery();
+    } else {
+      st.textContent = 'Hata: ' + (d.error || 'Kurgu başarısız');
+    }
+  } finally { btn.disabled = false; }
+}
+
 async function loadGallery() {
   const r = await fetch('/api/gallery');
   const d = await r.json();
@@ -684,7 +772,7 @@ async function loadGallery() {
       ${it.kind === 'video' ? `<video src="${it.url}" muted preload="metadata"></video>` : `<img src="${it.url}">`}
       <div class="gfoot">
         <div class="gmeta" title="${it.name}">${it.name} · ${it.size_mb}M</div>
-        ${it.kind === 'video' ? `<button class="ext-btn" title="Son karesinden +5 sn uzat" onclick="extendVideo('${it.rel}', event)">+5s Uzat</button>` : ''}
+        ${it.kind === 'video' ? `<button class="ext-btn" title="Zaman çizelgesine ekle" onclick="addToTimeline('${it.rel}','${it.name}', event)">+ Kurgu</button>` : ''}
       </div>
     </div>`).join('') || '<div style="color:var(--muted);font-size:12px">Henüz çıktı yok.</div>';
 }
@@ -824,6 +912,46 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 dest.write_bytes(base64.b64decode(b64))
                 rel = dest.relative_to(REPO_ROOT).as_posix()
                 self._send_json({"ok": True, "rel_path": rel, "url": f"/files/{urllib.parse.quote(rel)}"})
+                return
+
+            if path == "/api/timeline/render":
+                raw_clips = list(body.get("clips") or [])
+                if not raw_clips:
+                    self._send_json({"ok": False, "error": "En az 1 klip seçin."}, 400)
+                    return
+                resolved_clips: list[dict[str, Any]] = []
+                root_res = REPO_ROOT.resolve()
+                for c in raw_clips:
+                    rel = str(c.get("rel") or "").lstrip("/")
+                    abs_p = (REPO_ROOT / rel).resolve()
+                    if not str(abs_p).startswith(str(root_res)) or not abs_p.exists():
+                        self._send_json({"ok": False, "error": f"Geçersiz klip yolu: {rel}"}, 403)
+                        return
+                    resolved_clips.append({
+                        "path": abs_p,
+                        "start": c.get("start"),
+                        "end": c.get("end"),
+                        "transition": c.get("transition"),
+                    })
+                trans = str(body.get("transition") or "dissolve")
+                trans_sec = float(body.get("transition_sec") or 0.6)
+                OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                out_abs = OUTPUTS_DIR / f"timeline_{ts}_{len(resolved_clips)}clips.mp4"
+                try:
+                    res = postprocess.build_timeline_video(
+                        resolved_clips, out_abs, transition=trans, transition_sec=trans_sec, crf=15
+                    )
+                    rel_out = out_abs.relative_to(REPO_ROOT).as_posix()
+                    self._send_json({
+                        "ok": True,
+                        "name": out_abs.name,
+                        "rel": rel_out,
+                        "url": f"/files/{urllib.parse.quote(rel_out)}",
+                        **res,
+                    })
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, 500)
                 return
 
             if path == "/api/download-model":

@@ -1,8 +1,43 @@
-# PicoVid
+# PicoVid v0.5.0
 
 **[English](README.md) · [Türkçe](README.tr.md)**
 
-> **Normalde 16–24 GB VRAM gerektiren amiral gemisi 14B video üretim modellerini (Wan 2.2 T2V + I2V + Z-Image-Turbo Stüdyo), 4–6 GB VRAM'li düşük ekran kartlarında (AMD Vulkan & NVIDIA CUDA) çökmeden, stok sürüme göre 9.28×'e kadar daha hızlı ve 81 kareye (5.1 sn @ 640×384) kadar çalıştıran Apache 2.0 bellek & performans optimizasyon projesi.**
+> **Amiral gemisi 22B Ses + Video üretim modelini (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Ses) ve `Z-Image-Turbo`'yu 4–6 GB VRAM'li kartlarda (AMD Vulkan & NVIDIA CUDA) çalıştırır — 2-aşamalı natif x2 latent yükseltme, 4.3×–11.6× daha hızlı Video VAE, Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ve Çoklu Klip Zaman Çizelgesi (`xfade` + stereo `acrossfade`) içerir.**
+
+## v0.5.0 Yenilikleri (LTX-2.3 22B Ses+Video Motoru)
+
+- **LTX-2.3 22B Distilled v1.1 (Varsayılan `--engine ltx23`):** **AMD RX 5600 XT 6 GB (Vulkan, 32 GB RAM)** üzerinde 8 adımda (`DISTILLED_SIGMA_VALUES`) sinema kalitesinde video **VE senkronize 48 kHz Stereo Ses** üretir; hazır `stable-diffusion.cpp` Vulkan ikilisi (`master-1133-52491bd`) ile C++ derleme gerektirmez.
+- **6 GB VRAM İçin Ölçülmüş Hız Optimizasyonları (`~2.1×` Hızlanma + Daha Keskin Görüntü, Sıfır Kilitlenme):**
+  - `--max-vram -1.4 --disable-prefetch`: `6.15 GiB` WDDM Shared VRAM taşmasını bitirir (`1.51×` daha hızlı DiT) ve `49f–81f` kliplerde prefetch kilitlenmesini engeller.
+  - `--vae-tile-size 384x384 --vae-tile-overlap 0.15`: Video VAE çözümlemeyi **`4.3×–11.6×`** hızlandırır (`110.1s → 25.7s` / `149.3s → 12.8s`, **`41.31 dB PSNR`**).
+  - **Otomatik 2-Aşamalı Natif x2 Spatial Latent Upscaler (`ltx-2.3-spatial-upscaler-x2-1.1.safetensors`):** İlk 8 adımı yarı çözünürlükte (`320×192 → 640×384` veya `384×224 → 768×448`), son 3 iyileştirme adımını (`STAGE_2_DISTILLED_SIGMA_VALUES`) hedef çözünürlükte çalıştırır — **`1.41×–2.0×` ek hızlanma** ve belirgin biçimde daha düzgün nesne anatomisi!
+- **Ses Korumalı Sinema HD (`postprocess.py`):** 2× Vulkan Real-ESRGAN (`1280×768`) + 32 fps akıcılık uygulanırken LTX-2.3'ün 48 kHz Stereo AAC sesi eksiksiz korunur.
+- **Çoklu Klip Zaman Çizelgesi & Geçişler (`web_ui.py` & `postprocess.build_timeline_video`):** Web Stüdyosu (`http://127.0.0.1:7860`) üzerinden klipleri sıraya dizin, `xfade` geçiş efektini (`dissolve`, `fadeblack`, `wipeleft`, `smoothleft`, `circleopen`, `cut`) seçin ve senkronize stereo `acrossfade` ile tek MP4 olarak dışa aktarın.
+
+### LTX-2.3 22B Ölçülmüş Benchmarklar (AMD RX 5600 XT 6 GB Vulkan, Windows 11, 32 GB RAM)
+
+| Yapılandırma (`LTX-2.3 22B Distilled 1.1 Q4_K_M + Gemma-3-12B`) | Çıktı | DiT Süresi | Video VAE | Ses VAE | Toplam | Not |
+|---|---|---:|---:|---:|---:|---|
+| Eski Varsayılan (`--max-vram 0`, `256×256` karo) | `640×384 × 17f` | `959.5 s` | `110.1 s` | `4.0 s` | `1190.7 s` | `6.95 GiB` Shared taşması |
+| Optimize (`--max-vram -1.4`, `384×384` karo) | `640×384 × 17f` | **`636.5 s`** (`1.51×`) | **`25.7 s`** (`4.28×`) | `4.0 s` | **`775.7 s`** (`1.54×`) | `41.31 dB PSNR` |
+| Güvenli Tek-Aşama (`--max-vram -1.4 --disable-prefetch`) | `640×384 × 25f` | `766.6 s` | **`12.8 s`** | `3.9 s` | `880.9 s` | Sıfır kilitlenme |
+| **Otomatik 2-Aşamalı Natif x2 Upscaler (`320×192 → 640×384`)** | **`640×384 × 25f`** | **`542.8 s`** (`288s + 255s`) | **`12.5 s`** | **`4.0 s`** | **`699.6 s`** | **En hızlı + en keskin anatomi** |
+| Tam 5 Saniye Klip + Ses Korumalı Sinema HD | `1280×768 × 81→160f @ 32fps` | — | — | `24.4 s` | — | 5×5 sn Showreel ile doğrulandı (`22.45s` xfade MP4) |
+
+```powershell
+# Tek tıkla kurulum (hazır LTX-2.3 Vulkan motoru + Cinema HD + modeller, Visual Studio gerekmez!)
+.\setup.cmd
+
+# PicoVid v0.5.0 Web Stüdyosu (LTX-2.3 T2V/I2V/Stüdyo + Çoklu Klip Zaman Çizelgesi)
+.\web-studio.cmd
+
+# CLI: 5 saniyelik LTX-2.3 Ses+Video (Otomatik 2-Aşamalı x2 Upscaler + Ses Korumalı 1280x768 @ 32fps)
+py scripts/generate.py --engine ltx23 --mode t2v --cinema-hd -p "Two F-16 fighter jets flying over the illuminated Istanbul Bosphorus Bridge at dusk, roaring jet afterburners" -W 640 -H 384 -f 81 --fps 16 -o istanbul_f16_hd32.mp4
+```
+
+---
+
+## Geçmiş Wan 2.2 Düşük-VRAM Yama Araştırması (`v0.1–v0.4`)
 
 ![AMD RX 5600 XT 6GB Vulkan üzerinde Wan 2.2 14B 640x384 4-adım çıktısı](docs/media/wan22_640x384_33f_frame12_rx5600xt.png)
 ***AMD Radeon RX 5600 XT (6 GB VRAM, Vulkan, Windows 11)** üzerinde yerel olarak üretilmiştir — `640×384`, 33 kare (2.1 sn), 4 adım (`wan2.2-t2v-rapid-aio-v10-Q4_K`), gerçek Wan 2.1 VAE, uçtan uca ~8.7 dk.*
