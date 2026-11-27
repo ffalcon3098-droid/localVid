@@ -60,10 +60,10 @@ def rife_exe() -> pathlib.Path:
 def _download_zip(url: str, dest_zip: pathlib.Path, label: str) -> bool:
     curl = shutil.which("curl.exe") or shutil.which("curl")
     if not curl:
-        print(f"HATA: {label} indirmek için curl gerekli.", file=sys.stderr)
+        print(f"ERROR: curl is required to download {label}.", file=sys.stderr)
         return False
     dest_zip.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[PicoVid] İndiriliyor: {label} ...")
+    print(f"[PicoVid] Downloading: {label} ...")
     cmd = [
         curl, "-L", "-C", "-",
         "--retry", "5", "--retry-delay", "3",
@@ -83,7 +83,7 @@ def _safe_extract_zip(zf: zipfile.ZipFile, dest_dir: pathlib.Path) -> None:
             continue
         target = (dest_root / rel).resolve()
         if not target.is_relative_to(dest_root):
-            raise ValueError(f"Zip-Slip engellendi: {member.filename}")
+            raise ValueError(f"Zip-Slip blocked: {member.filename}")
         target.parent.mkdir(parents=True, exist_ok=True)
         with zf.open(member) as src, target.open("wb") as dst:
             shutil.copyfileobj(src, dst)
@@ -122,7 +122,7 @@ def install_rife() -> bool:
         return True
     RIFE_DIR.mkdir(parents=True, exist_ok=True)
     tmp_zip = TOOLS_DIR / "rife_tmp.zip"
-    if not _download_zip(RIFE_URL, tmp_zip, "rife-ncnn-vulkan (rife-v4.6 çıkarılacak, MIT)"):
+    if not _download_zip(RIFE_URL, tmp_zip, "rife-ncnn-vulkan (extracting rife-v4.6, MIT)"):
         return False
     try:
         # Extract ONLY executable, DLLs, and rife-v4.6 (~15 MB on disk instead of 411 MB!)
@@ -142,7 +142,7 @@ def install_rife() -> bool:
                     continue
                 target = (rife_root / rel).resolve()
                 if not target.is_relative_to(rife_root):
-                    raise ValueError(f"Zip-Slip engellendi: {member.filename}")
+                    raise ValueError(f"Zip-Slip blocked: {member.filename}")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member) as src, target.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
@@ -167,7 +167,7 @@ def extract_last_frame(video_path: pathlib.Path, out_png: pathlib.Path) -> pathl
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
-        raise RuntimeError(f"Son kare okunamadı, video açılamadı: {video_path}")
+        raise RuntimeError(f"Failed to open video for last-frame extraction: {video_path}")
     last_frame = None
     while True:
         ok, fr = cap.read()
@@ -176,10 +176,10 @@ def extract_last_frame(video_path: pathlib.Path, out_png: pathlib.Path) -> pathl
         last_frame = fr
     cap.release()
     if last_frame is None:
-        raise RuntimeError(f"Videoda kare bulunamadı: {video_path}")
+        raise RuntimeError(f"No frames found in video: {video_path}")
     out_png.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(out_png), last_frame):
-        raise RuntimeError(f"Son kare PNG olarak kaydedilemedi: {out_png}")
+        raise RuntimeError(f"Failed to write last frame PNG: {out_png}")
     return out_png
 
 
@@ -222,7 +222,7 @@ def stitch_video_segments(
     import numpy as np
 
     if not segment_paths:
-        raise ValueError("Birleştirilecek segment bulunamadı.")
+        raise ValueError("No segments provided to stitch.")
 
     ff = resolve_ffmpeg()
     work = pathlib.Path(tempfile.mkdtemp(prefix="picovid_stitch_"))
@@ -238,7 +238,7 @@ def stitch_video_segments(
         for seg_i, sp in enumerate(segment_paths):
             cap = cv2.VideoCapture(str(sp))
             if not cap.isOpened():
-                raise RuntimeError(f"Segment açılamadı: {sp}")
+                raise RuntimeError(f"Failed to open segment: {sp}")
             if seg_i == 0:
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -275,7 +275,7 @@ def stitch_video_segments(
                 prev_tail = seg_last
 
         if out_idx <= 0:
-            raise RuntimeError("Segment birleştirmede hiç kare üretilemedi.")
+            raise RuntimeError("No frames produced during segment stitching.")
 
         output_video.parent.mkdir(parents=True, exist_ok=True)
         if ff:
@@ -292,7 +292,7 @@ def stitch_video_segments(
             ]
             p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if p.returncode != 0 or not output_video.exists():
-                raise RuntimeError(f"ffmpeg segment birleştirme başarısız: {p.stderr[-300:]}")
+                raise RuntimeError(f"ffmpeg segment stitching failed: {p.stderr[-300:]}")
         else:
             writer = cv2.VideoWriter(str(output_video), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
             for png in sorted(seq_dir.glob("*.png")):
@@ -341,10 +341,10 @@ def concat_av_clips(
     """Concatenate multiple H.264+AAC MP4 clips cleanly preserving both video and 48kHz stereo audio."""
     ff = resolve_ffmpeg()
     if not ff:
-        raise RuntimeError("ffmpeg / imageio-ffmpeg bulunamadı.")
+        raise RuntimeError("ffmpeg / imageio-ffmpeg not found.")
     valid = [p.resolve() for p in clip_paths if p.exists()]
     if not valid:
-        raise ValueError("Birleştirilecek klip bulunamadı.")
+        raise ValueError("No clips provided to concatenate.")
 
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
     cmd: list[str] = [ff, "-y"]
@@ -380,7 +380,7 @@ def concat_av_clips(
         ]
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0 or not output_mp4.exists():
-        raise RuntimeError(f"ffmpeg showreel birleştirme başarısız: {p.stderr[-400:]}")
+        raise RuntimeError(f"ffmpeg showreel concat failed: {p.stderr[-400:]}")
     return {
         "output_mp4": str(output_mp4),
         "clips": n,
@@ -454,9 +454,9 @@ def build_timeline_video(
     """
     ff = resolve_ffmpeg()
     if not ff:
-        raise RuntimeError("ffmpeg / imageio-ffmpeg bulunamadı.")
+        raise RuntimeError("ffmpeg / imageio-ffmpeg not found.")
     if not clips:
-        raise ValueError("Zaman çizelgesi için en az 1 klip gerekli.")
+        raise ValueError("At least 1 clip is required for the timeline.")
 
     trans_default = transition if transition in TIMELINE_TRANSITIONS else "dissolve"
     trans_d = max(0.0, min(2.0, float(transition_sec)))
@@ -465,7 +465,7 @@ def build_timeline_video(
     for item in clips:
         p = pathlib.Path(str(item["path"])).resolve()
         if not p.exists():
-            raise FileNotFoundError(f"Klip bulunamadı: {p}")
+            raise FileNotFoundError(f"Clip not found: {p}")
         info = probe_media_info(p, ff)
         st = max(0.0, float(item.get("start") or 0.0))
         raw_dur = float(info["duration"])
@@ -573,7 +573,7 @@ def build_timeline_video(
 
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0 or not output_mp4.exists():
-        raise RuntimeError(f"ffmpeg zaman çizelgesi kurgusu başarısız: {p.stderr[-500:]}")
+        raise RuntimeError(f"ffmpeg timeline render failed: {p.stderr[-500:]}")
     return {
         "output_mp4": str(output_mp4),
         "clips": n,
@@ -593,7 +593,7 @@ def extract_video_frames(video_path: pathlib.Path, out_dir: pathlib.Path) -> tup
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
-        raise RuntimeError(f"Video açılamadı: {video_path}")
+        raise RuntimeError(f"Failed to open video: {video_path}")
     fps = float(cap.get(cv2.CAP_PROP_FPS) or 16.0)
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -622,7 +622,7 @@ def enhance_video(
     t0 = time.monotonic()
     ff = resolve_ffmpeg()
     if not ff:
-        raise RuntimeError("ffmpeg / imageio-ffmpeg bulunamadı.")
+        raise RuntimeError("ffmpeg / imageio-ffmpeg not found.")
 
     work = pathlib.Path(tempfile.mkdtemp(prefix="picovid_post_"))
     try:
@@ -631,10 +631,10 @@ def enhance_video(
         rf_dir = work / "03_rife"
 
         if progress_cb:
-            progress_cb(10.0, "Kareler çıkarılıyor...")
+            progress_cb(10.0, "Extracting frames...")
         n_frames, in_fps, in_w, in_h = extract_video_frames(input_video, in_dir)
         if n_frames <= 0:
-            raise RuntimeError("Giriş videosunda kare bulunamadı.")
+            raise RuntimeError("No frames found in input video.")
 
         cur_dir = in_dir
         cur_w, cur_h = in_w, in_h
@@ -662,7 +662,7 @@ def enhance_video(
             p_up = subprocess.run(cmd_up, cwd=str(REALESRGAN_DIR), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             up_sec = time.monotonic() - t_up
             if p_up.returncode != 0 or not any(up_dir.glob("*.png")):
-                raise RuntimeError(f"realesrgan-ncnn-vulkan başarısız (rc={p_up.returncode}): {p_up.stderr[-300:]}")
+                raise RuntimeError(f"realesrgan-ncnn-vulkan failed (rc={p_up.returncode}): {p_up.stderr[-300:]}")
 
             # Supersample 4x -> 2x with AREA/Lanczos for razor-sharp photorealistic HD!
             if native_scale == 4 and upscale_factor == 2:
@@ -735,7 +735,7 @@ def enhance_video(
         if use_ffmpeg_mci:
             target_fps = in_fps * rife_factor
             if progress_cb:
-                progress_cb(72.0, f"2× Optik Akış İnterpolasyonu ({cur_w}x{cur_h} @ {target_fps:.0f}fps) + H.264...")
+                progress_cb(72.0, f"2× Optical-Flow Interpolation ({cur_w}x{cur_h} @ {target_fps:.0f}fps) + H.264...")
             t_rf = time.monotonic()
             cmd_ff += [
                 "-vf", f"minterpolate=fps={target_fps:.0f}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,scale=out_color_matrix=bt709",
@@ -744,7 +744,7 @@ def enhance_video(
             interp_backend = "ffmpeg_aobmc"
         else:
             if progress_cb:
-                progress_cb(88.0, f"H.264 MP4 kodlanıyor ({cur_w}x{cur_h} @ {cur_fps:.0f}fps, CRF {crf})...")
+                progress_cb(88.0, f"Encoding H.264 MP4 ({cur_w}x{cur_h} @ {cur_fps:.0f}fps, CRF {crf})...")
             cmd_ff += ["-vf", "scale=out_color_matrix=bt709"]
 
         if keep_audio:
@@ -766,7 +766,7 @@ def enhance_video(
         if use_ffmpeg_mci:
             rf_sec = time.monotonic() - t_rf
         if p_ff.returncode != 0 or not output_mp4.exists():
-            raise RuntimeError(f"ffmpeg H.264 kodlama başarısız: {p_ff.stderr[-300:]}")
+            raise RuntimeError(f"ffmpeg H.264 encoding failed: {p_ff.stderr[-300:]}")
 
         if use_ffmpeg_mci:
             import cv2

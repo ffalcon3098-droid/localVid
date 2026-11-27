@@ -1,10 +1,17 @@
-# PicoVid v0.5.0
+# PicoVid v0.7.0
 
 **[English](README.md) · [Türkçe](README.tr.md)**
 
-> **Amiral gemisi 22B Ses + Video üretim modelini (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Ses) ve `Z-Image-Turbo`'yu 4–6 GB VRAM'li kartlarda (AMD Vulkan & NVIDIA CUDA) çalıştırır — 2-aşamalı natif x2 latent yükseltme, 4.3×–11.6× daha hızlı Video VAE, Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ve Çoklu Klip Zaman Çizelgesi (`xfade` + stereo `acrossfade`) içerir.**
+> **Amiral gemisi 22B Ses + Video üretim modelini (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Ses) ve `Z-Image-Turbo`'yu 4–6 GB VRAM'li kartlarda (AMD Vulkan & NVIDIA CUDA) çalıştırır — İngilizce varsayılan Web Stüdyosu & CLI, 2-aşamalı natif x2 latent yükseltme, 4.3×–11.6× daha hızlı Video VAE, Ses Korumalı Sinema HD (`1280×768 @ 32fps`) ve Çoklu Klip Zaman Çizelgesi (`xfade` + stereo `acrossfade`) içerir.**
 
-## v0.5.0 Yenilikleri (LTX-2.3 22B Ses+Video Motoru)
+## v0.6.0–v0.7.0 Yenilikleri
+
+- **İngilizce Varsayılan Web Stüdyosu, Terminal Paneli, Sihirbaz & Kurulum (`v0.7.0`):** `web_ui.py` (`<html lang="en">`), `ui_console.py`, `generate.py`, `postprocess.py`, `download_models.py`, `picovid.cmd` ve `setup.ps1` temiz İngilizce varsayılanına geçirildi (etkileşimli onaylarda hem `y/n` hem `e/h` tuşları desteklenir).
+- **Web Stüdyosu Güvenlik Kalkanı & LTX-2.3 Hız/Kalite İyileştirmeleri (`v0.6.0`):**
+  - Katı `Host`/`Origin`/`Content-Type`/`X-PicoVid-Token` CSRF koruması, sıkı `OUTPUTS_DIR` + medya uzantısı izin listesi (`is_relative_to()`), SVG/HTML XSS yükleme engeli, `postprocess.py` Zip-Slip koruması ve tam süreç-ağacı iptali (`taskkill /F /T /PID`).
+  - Gemma-3 kodlarken arka planda LTX-2.3 DiT için `start_file_prewarm`, Vulkan'da `--flash-attn off`, Cinema HD öncesi `--compression-quality 100`, BT.709 H.264 renk etiketleri ve sıfır-kopyalı `os.replace()` kare dizileme.
+
+## v0.5.0 Öne Çıkanlar (LTX-2.3 22B Ses+Video Motoru)
 
 - **LTX-2.3 22B Distilled v1.1 (Varsayılan `--engine ltx23`):** **AMD RX 5600 XT 6 GB (Vulkan, 32 GB RAM)** üzerinde 8 adımda (`DISTILLED_SIGMA_VALUES`) sinema kalitesinde video **VE senkronize 48 kHz Stereo Ses** üretir; hazır `stable-diffusion.cpp` Vulkan ikilisi (`master-1133-52491bd`) ile C++ derleme gerektirmez.
 - **6 GB VRAM İçin Ölçülmüş Hız Optimizasyonları (`~2.1×` Hızlanma + Daha Keskin Görüntü, Sıfır Kilitlenme):**

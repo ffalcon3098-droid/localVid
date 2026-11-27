@@ -5,7 +5,7 @@ PicoVid Hardware-Aware Model Downloader driven by configs/models_registry.json.
 Supports:
 - Interactive Smart Download Wizard (when launched with no arguments or --interactive):
   detects GPU VRAM, total system RAM, and free disk space, and highlights the
-  best-fit bundle with a '★ Önerilen' badge.
+  best-fit bundle with a '★ Recommended' badge.
 - Direct profile downloads (--profile t2v|t2i|i2v|i2v-compact|studio|studio-compact|all)
 - Simulated hardware dry-run (--interactive --dry-run --simulate-hw cuda-4gb-12gb)
 - Resumable transfers via curl (-C - --speed-limit), free disk headroom check, and exact byte verification.
@@ -136,9 +136,9 @@ def _download_with_python_urllib(url: str, dest: pathlib.Path, expected_bytes: i
             if exc.code == 416:
                 dest.unlink(missing_ok=True)
                 continue
-            print(f"\n  [WARN] Python indirme denemesi {attempt}/4 HTTP {exc.code}: {exc.reason}", file=sys.stderr)
+            print(f"\n  [WARN] Python download attempt {attempt}/4 HTTP {exc.code}: {exc.reason}", file=sys.stderr)
         except Exception as exc:
-            print(f"\n  [WARN] Python indirme denemesi {attempt}/4 hata: {exc}", file=sys.stderr)
+            print(f"\n  [WARN] Python download attempt {attempt}/4 error: {exc}", file=sys.stderr)
         time.sleep(min(10, attempt * 2))
     return False
 
@@ -180,10 +180,10 @@ def download_file(item: dict[str, Any]) -> bool:
             if proc.returncode == 0:
                 curl_ok = True
                 break
-            print(f"  [WARN] curl çıkış kodu {proc.returncode} (resume={try_resume})", file=sys.stderr)
+            print(f"  [WARN] curl exit code {proc.returncode} (resume={try_resume})", file=sys.stderr)
 
     if not curl_ok:
-        print("  [INFO] Yerleşik Python indiricisine geçiliyor (devam ettirilebilir)...")
+        print("  [INFO] Falling back to built-in resumable Python downloader...")
         _download_with_python_urllib(item["url"], p, exp)
 
     ok, msg, _ = check_file(item)
@@ -196,7 +196,7 @@ def detect_host_summary(simulate_hw: str | None = None) -> dict[str, Any]:
     if simulate_hw:
         sim_presets: dict[str, dict[str, Any]] = {
             "cuda-4gb-12gb": {
-                "gpu_name": "NVIDIA GeForce GTX 1650 (Simüle)",
+                "gpu_name": "NVIDIA GeForce GTX 1650 (Simulated)",
                 "backend": "cuda",
                 "vram_total_gib": 4.0,
                 "ram_total_gib": 12.0,
@@ -204,7 +204,7 @@ def detect_host_summary(simulate_hw: str | None = None) -> dict[str, Any]:
                 "disk_drive": "C:",
             },
             "vulkan-4gb-16gb": {
-                "gpu_name": "AMD Radeon RX 5500 XT 4GB (Simüle)",
+                "gpu_name": "AMD Radeon RX 5500 XT 4GB (Simulated)",
                 "backend": "vulkan",
                 "vram_total_gib": 4.0,
                 "ram_total_gib": 16.0,
@@ -212,7 +212,7 @@ def detect_host_summary(simulate_hw: str | None = None) -> dict[str, Any]:
                 "disk_drive": "C:",
             },
             "vulkan-6gb-20gb": {
-                "gpu_name": "AMD Radeon RX 5600 XT 6GB (Simüle)",
+                "gpu_name": "AMD Radeon RX 5600 XT 6GB (Simulated)",
                 "backend": "vulkan",
                 "vram_total_gib": 6.0,
                 "ram_total_gib": 20.0,
@@ -220,7 +220,7 @@ def detect_host_summary(simulate_hw: str | None = None) -> dict[str, Any]:
                 "disk_drive": "C:",
             },
             "vulkan-6gb-32gb": {
-                "gpu_name": "AMD Radeon RX 5600 XT 6GB (Simüle)",
+                "gpu_name": "AMD Radeon RX 5600 XT 6GB (Simulated)",
                 "backend": "vulkan",
                 "vram_total_gib": 6.0,
                 "ram_total_gib": 32.0,
@@ -228,7 +228,7 @@ def detect_host_summary(simulate_hw: str | None = None) -> dict[str, Any]:
                 "disk_drive": "C:",
             },
             "cuda-8gb-32gb": {
-                "gpu_name": "NVIDIA GeForce RTX 4060 8GB (Simüle)",
+                "gpu_name": "NVIDIA GeForce RTX 4060 8GB (Simulated)",
                 "backend": "cuda",
                 "vram_total_gib": 8.0,
                 "ram_total_gib": 32.0,
@@ -268,7 +268,7 @@ def detect_host_summary(simulate_hw: str | None = None) -> dict[str, Any]:
         }
 
     return {
-        "gpu_name": "Bilinmeyen GPU",
+        "gpu_name": "Unknown GPU",
         "backend": "vulkan",
         "vram_total_gib": 4.0,
         "ram_total_gib": ram_gib,
@@ -284,10 +284,10 @@ def recommend_bundle(host: dict[str, Any]) -> tuple[str, str]:
     disk = float(host["disk_free_gib"])
 
     if vram <= 4.5 or ram <= 16.5 or disk < 24.5:
-        return "1", f"4–6 GB VRAM / hızlı 5 sn video için en hafif paket (GPU {vram:.1f} GiB, RAM {ram:.1f} GiB)"
+        return "1", f"Lightest 4–6 GB VRAM / fast 5s video bundle (GPU {vram:.1f} GiB, RAM {ram:.1f} GiB)"
     if ram >= 24.0 and disk >= 29.5:
-        return "3", f"6 GB+ VRAM ({vram:.1f} GiB) ve >=24 GB RAM ({ram:.1f} GiB) ile tam kalite 14B Stüdyo"
-    return "4", f"Düşük disk/RAM için kompakt Q3_K_M Stüdyo (RAM {ram:.1f} GiB, Disk {disk:.1f} GiB)"
+        return "3", f"Full-quality 14B Studio bundle for 6 GB+ VRAM ({vram:.1f} GiB) and >=24 GB RAM ({ram:.1f} GiB)"
+    return "4", f"Compact Q3_K_M Studio bundle for lower disk/RAM (RAM {ram:.1f} GiB, Disk {disk:.1f} GiB)"
 
 
 def download_file_ids(
@@ -310,17 +310,17 @@ def download_file_ids(
 
     if needed_bytes > 0 and (free_bytes - needed_bytes) < headroom and not force_low_disk:
         print(
-            f"HATA: Yetersiz boş disk alanı!\n"
-            f"  Gereken : {format_gb(needed_bytes)}\n"
-            f"  Boş     : {format_gb(free_bytes)}\n"
-            f"  İpucu   : Yer açın, 'i2v-compact' (Q3_K_M) seçin veya --force-low-disk kullanın.",
+            f"ERROR: Insufficient free disk space!\n"
+            f"  Required : {format_gb(needed_bytes)}\n"
+            f"  Free     : {format_gb(free_bytes)}\n"
+            f"  Tip      : Free up disk space, choose 'i2v-compact' (Q3_K_M), or pass --force-low-disk.",
             file=sys.stderr,
         )
         return False
 
     print(
-        f"[PicoVid] {len(unique_ids)} dosya kontrol ediliyor "
-        f"(indirilecek: {format_gb(needed_bytes)}, boş disk: {format_gb(free_bytes)})..."
+        f"[PicoVid] Checking {len(unique_ids)} file(s) "
+        f"(to download: {format_gb(needed_bytes)}, free disk: {format_gb(free_bytes)})..."
     )
     all_ok = True
     for fid in unique_ids:
@@ -342,11 +342,11 @@ def run_interactive_downloader(
     profiles = reg["download_profiles"]
 
     menu_items = [
-        ("1", "fast-5b", "Hızlı 5sn Paket: Wan 2.2 TI2V-5B Turbo (T2V + I2V)", "5 saniyelik videolar (~3-6 dk), 4-6 GB VRAM"),
-        ("2", "t2v", "14B T2V Başlangıç (Wan 2.2 14B T2V Q4_K + TE + VAE)", "14B tek model T2V"),
-        ("3", "studio", "14B Stüdyo Paketi: T2I + I2V Q4_K_M", "6 GB+ VRAM ve >=24 GB RAM için"),
-        ("4", "studio-compact", "14B Stüdyo Kompakt: T2I + I2V Q3_K_M", "Düşük disk/RAM alternatifi"),
-        ("5", "all", "Tam Paket: 5B Turbo + 14B T2V + T2I + I2V", "Tüm modlar eksiksiz"),
+        ("1", "fast-5b", "Fast 5s Bundle: Wan 2.2 TI2V-5B Turbo (T2V + I2V)", "5-second clips (~3-6 min), 4-6 GB VRAM"),
+        ("2", "t2v", "14B T2V Starter (Wan 2.2 14B T2V Q4_K + TE + VAE)", "14B single-model T2V"),
+        ("3", "studio", "14B Studio Bundle: T2I + I2V Q4_K_M", "For 6 GB+ VRAM and >=24 GB RAM"),
+        ("4", "studio-compact", "14B Studio Compact: T2I + I2V Q3_K_M", "Lower disk/RAM alternative"),
+        ("5", "all", "Full Bundle: 5B Turbo + 14B T2V + T2I + I2V", "All modes complete"),
     ]
 
     def calc_pack_sizes(prof_key: str) -> tuple[int, int]:
@@ -363,46 +363,46 @@ def run_interactive_downloader(
         hdr = (
             f"[bold cyan]GPU:[/bold cyan] {host['gpu_name']} ({host['backend'].upper()}, {host['vram_total_gib']:.1f} GiB VRAM)  |  "
             f"[bold cyan]RAM:[/bold cyan] {host['ram_total_gib']:.1f} GiB  |  "
-            f"[bold cyan]Boş Disk ({host['disk_drive'] or 'hedef'}):[/bold cyan] {host['disk_free_gib']:.1f} GiB\n"
-            f"[green]★ Öneri Nedeni:[/green] {rec_reason}"
+            f"[bold cyan]Free Disk ({host['disk_drive'] or 'target'}):[/bold cyan] {host['disk_free_gib']:.1f} GiB\n"
+            f"[green]★ Recommendation:[/green] {rec_reason}"
         )
         console.print()
-        console.print(Panel(hdr, title="[bold cyan]PicoVid v0.3.0 · Akıllı Model İndirme Sihirbazı[/bold cyan]", border_style="cyan", box=box.ROUNDED))
+        console.print(Panel(hdr, title="[bold cyan]PicoVid v0.7.0 · Smart Model Download Wizard[/bold cyan]", border_style="cyan", box=box.ROUNDED))
 
         tbl = Table(box=box.SIMPLE_HEAD, expand=True, padding=(0, 1))
-        tbl.add_column("Seçim", style="bold cyan", width=6)
-        tbl.add_column("Paket", style="white", ratio=3)
-        tbl.add_column("Toplam", justify="right", width=11)
-        tbl.add_column("Kalan", justify="right", width=11)
-        tbl.add_column("Not / Öneri", ratio=2)
+        tbl.add_column("Choice", style="bold cyan", width=6)
+        tbl.add_column("Bundle", style="white", ratio=3)
+        tbl.add_column("Total", justify="right", width=11)
+        tbl.add_column("Remaining", justify="right", width=11)
+        tbl.add_column("Notes", ratio=2)
 
         for key, prof_key, label, note in menu_items:
             tot_b, rem_b = calc_pack_sizes(prof_key)
-            badge = "[bold green]★ Önerilen[/bold green] · " + note if key == rec_key else f"[dim]{note}[/dim]"
-            rem_txt = "[green]Hazır[/green]" if rem_b == 0 else format_gb(rem_b)
+            badge = "[bold green]★ Recommended[/bold green] · " + note if key == rec_key else f"[dim]{note}[/dim]"
+            rem_txt = "[green]Ready[/green]" if rem_b == 0 else format_gb(rem_b)
             tbl.add_row(f"[{key}]", label, format_gb(tot_b), rem_txt, badge)
         console.print(tbl)
     else:
-        print("=== PicoVid v0.2.0 · Akıllı Model İndirme Sihirbazı ===")
+        print("=== PicoVid v0.7.0 · Smart Model Download Wizard ===")
         print(
-            f"Donanım: {host['gpu_name']} ({host['backend'].upper()}, {host['vram_total_gib']:.1f} GiB VRAM) | "
-            f"RAM: {host['ram_total_gib']:.1f} GiB | Boş Disk: {host['disk_free_gib']:.1f} GiB"
+            f"Hardware : {host['gpu_name']} ({host['backend'].upper()}, {host['vram_total_gib']:.1f} GiB VRAM) | "
+            f"RAM: {host['ram_total_gib']:.1f} GiB | Free Disk: {host['disk_free_gib']:.1f} GiB"
         )
-        print(f"Öneri  : [{rec_key}] — {rec_reason}")
+        print(f"Suggested: [{rec_key}] — {rec_reason}")
         for key, prof_key, label, note in menu_items:
             tot_b, rem_b = calc_pack_sizes(prof_key)
-            mark = " ★ Önerilen" if key == rec_key else ""
-            print(f"  [{key}] {label} ({format_gb(tot_b)}, kalan {format_gb(rem_b)}){mark} — {note}")
+            mark = " ★ Recommended" if key == rec_key else ""
+            print(f"  [{key}] {label} ({format_gb(tot_b)}, remaining {format_gb(rem_b)}){mark} — {note}")
 
     if dry_run:
         chosen_prof = dict((k, p) for k, p, _, _ in menu_items)[rec_key]
-        print(f"\n[DRY-RUN] Önerilen paket: [{rec_key}] -> profile='{chosen_prof}' ({rec_reason})")
+        print(f"\n[DRY-RUN] Recommended bundle: [{rec_key}] -> profile='{chosen_prof}' ({rec_reason})")
         return 0
 
     if use_rich:
-        choice = Prompt.ask("İndirmek istediğiniz paket", choices=["1", "2", "3", "4", "5"], default=rec_key)
+        choice = Prompt.ask("Bundle to download", choices=["1", "2", "3", "4", "5"], default=rec_key)
     else:
-        choice = input(f"İndirmek istediğiniz paket [{rec_key}]: ").strip() or rec_key
+        choice = input(f"Bundle to download [{rec_key}]: ").strip() or rec_key
         if choice not in ("1", "2", "3", "4", "5"):
             choice = rec_key
 
@@ -418,12 +418,12 @@ def run_interactive_downloader(
         if z_rem > 0:
             if use_rich:
                 add_t2i = Confirm.ask(
-                    f"Opsiyonel: İlk kare / fotoğraf üretimi için Z-Image-Turbo (+{format_gb(z_rem)}) da eklensin mi?",
+                    f"Optional: also include Z-Image-Turbo (+{format_gb(z_rem)}) for first-frame / photo generation?",
                     default=False,
                 )
             else:
-                ans = input(f"Opsiyonel: Z-Image-Turbo (+{format_gb(z_rem)}) da eklensin mi? [e/H]: ").strip().lower()
-                add_t2i = ans in ("e", "evet", "y", "yes")
+                ans = input(f"Optional: also include Z-Image-Turbo (+{format_gb(z_rem)})? [y/N]: ").strip().lower()
+                add_t2i = ans in ("y", "yes", "e", "evet")
             if add_t2i:
                 file_ids += z_ids
 
@@ -454,7 +454,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.list_profiles:
-        print("=== PicoVid Model Profilleri ===")
+        print("=== PicoVid Model Profiles ===")
         for pname, pdef in profiles.items():
             req_bytes = sum(files_map[fid]["expected_bytes"] for fid in pdef["required"])
             print(f"  {pname:15s} ({format_gb(req_bytes):>9s})  {pdef['desc']}")
@@ -483,7 +483,7 @@ def main() -> int:
             selected.append((fid, False, files_map[fid]))
 
     if args.check:
-        print(f"=== PicoVid Model Bütünlük Kontrolü (profile={profile_name}) ===")
+        print(f"=== PicoVid Model Integrity Check (profile={profile_name}) ===")
         all_req_ok = True
         for fid, is_req, item in selected:
             ok, msg, _ = check_file(item)

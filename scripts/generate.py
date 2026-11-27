@@ -53,22 +53,22 @@ def prompt_yes_no(question: str, default: bool = True) -> bool:
     if ui_console.HAS_RICH and ui_console.is_interactive_tty():
         from rich.prompt import Prompt
         console = ui_console.make_console()
-        ans = Prompt.ask(question, default="E" if default else "h", console=console).strip().lower()
-        return ans in ("", "e", "evet", "y", "yes") if default else ans in ("e", "evet", "y", "yes")
-    hint = "[E/h]" if default else "[e/H]"
+        ans = Prompt.ask(question, default="Y" if default else "n", console=console).strip().lower()
+        return ans in ("", "y", "yes", "e", "evet") if default else ans in ("y", "yes", "e", "evet")
+    hint = "[Y/n]" if default else "[y/N]"
     ans = input(f"{question} {hint}: ").strip().lower()
-    return ans in ("", "e", "evet", "y", "yes") if default else ans in ("e", "evet", "y", "yes")
+    return ans in ("", "y", "yes", "e", "evet") if default else ans in ("y", "yes", "e", "evet")
 
 
 def ensure_sd_cli_available(sd_cli: pathlib.Path, backend: str, interactive: bool) -> pathlib.Path | None:
     """If compiled sd-cli.exe is missing, offer automatic patch + build for detected GPU backend."""
     if sd_cli.exists():
         return sd_cli
-    print(f"\n[PicoVid] Derlenmiş motor bulunamadı: {sd_cli}", file=sys.stderr)
-    print(f"          Algılanan backend: {backend.upper()}", file=sys.stderr)
+    print(f"\n[PicoVid] Compiled engine not found: {sd_cli}", file=sys.stderr)
+    print(f"          Detected backend: {backend.upper()}", file=sys.stderr)
     if not (interactive or ui_console.is_interactive_tty()):
         print(
-            f"Derlemek için:\n"
+            f"To build from source:\n"
             f"  powershell -ExecutionPolicy Bypass -File scripts/apply_patches.ps1\n"
             f"  powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -Backend {backend}",
             file=sys.stderr,
@@ -76,14 +76,14 @@ def ensure_sd_cli_available(sd_cli: pathlib.Path, backend: str, interactive: boo
         return None
 
     if not prompt_yes_no(
-        f"Yamaları uygulayıp {backend.upper()} motorunu şimdi otomatik derleyelim mi? (apply_patches.ps1 + build.ps1)",
+        f"Apply patches and automatically build the {backend.upper()} engine now? (apply_patches.ps1 + build.ps1)",
         default=True,
     ):
         return None
 
     src_dir = REPO_ROOT / "third_party" / "stable-diffusion.cpp"
     if not src_dir.exists():
-        print("[PicoVid] stable-diffusion.cpp (3b12781) klonlanıyor...")
+        print("[PicoVid] Cloning stable-diffusion.cpp (3b12781)...")
         r_clone = subprocess.run(
             [
                 "git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules",
@@ -92,7 +92,7 @@ def ensure_sd_cli_available(sd_cli: pathlib.Path, backend: str, interactive: boo
             cwd=str(REPO_ROOT),
         )
         if r_clone.returncode != 0:
-            print("HATA: git clone başarısız oldu.", file=sys.stderr)
+            print("ERROR: git clone failed.", file=sys.stderr)
             return None
         subprocess.run(["git", "-C", str(src_dir), "checkout", "3b12781"], cwd=str(REPO_ROOT))
 
@@ -109,7 +109,7 @@ def ensure_sd_cli_available(sd_cli: pathlib.Path, backend: str, interactive: boo
             cwd=str(REPO_ROOT),
         )
         if r_patch.returncode != 0:
-            print("HATA: apply_patches.ps1 başarısız oldu.", file=sys.stderr)
+            print("ERROR: apply_patches.ps1 failed.", file=sys.stderr)
             return None
 
     r_build = subprocess.run(
@@ -117,7 +117,7 @@ def ensure_sd_cli_available(sd_cli: pathlib.Path, backend: str, interactive: boo
         cwd=str(REPO_ROOT),
     )
     if r_build.returncode != 0:
-        print(f"HATA: build.ps1 -Backend {backend} başarısız oldu.", file=sys.stderr)
+        print(f"ERROR: build.ps1 -Backend {backend} failed.", file=sys.stderr)
         return None
 
     re_resolved = resolve_sd_cli(backend, None)
@@ -189,7 +189,7 @@ def ensure_mode_models_available(
         return True
 
     files_map = reg["files"]
-    print(f"\n[PicoVid] '{mode.upper()} ({engine.upper()})' modu için {len(missing_ids)} eksik model bulundu (toplam {download_models.format_gb(missing_bytes)}):")
+    print(f"\n[PicoVid] Found {len(missing_ids)} missing model(s) for '{mode.upper()} ({engine.upper()})' (total {download_models.format_gb(missing_bytes)}):")
     for fid in missing_ids:
         item = files_map[fid]
         print(f"  - {item['path']} ({download_models.format_gb(int(item['expected_bytes']))})")
@@ -201,14 +201,14 @@ def ensure_mode_models_available(
             prof_hint = "fast-5b"
         else:
             prof_hint = {"t2v": "t2v", "t2i": "t2i", "i2v": "i2v", "studio": "studio"}.get(mode, "t2v")
-        print(f"İndirmek için: py scripts/download_models.py --profile {prof_hint}", file=sys.stderr)
+        print(f"To download: py scripts/download_models.py --profile {prof_hint}", file=sys.stderr)
         return False
 
     if not prompt_yes_no(
-        f"Eksik {len(missing_ids)} model ({download_models.format_gb(missing_bytes)}) şimdi indirilsin mi?",
+        f"Download the {len(missing_ids)} missing model(s) ({download_models.format_gb(missing_bytes)}) now?",
         default=True,
     ):
-        print("[PicoVid] İndirme iptal edildi.")
+        print("[PicoVid] Download cancelled.")
         return False
 
     return download_models.download_file_ids(missing_ids, reg)
@@ -518,11 +518,11 @@ def select_profile(
             max_vram = dyn_cap
         if live_free < 3.2:
             vram_warning = (
-                f"Uyarı: Arka plan uygulamaları {live_used:.2f} GiB VRAM kullanıyor "
-                f"(boş: {live_free:.2f} GiB); tarayıcı/IDE kapatmak hızı ~2× artırır."
+                f"Warning: background apps are using {live_used:.2f} GiB VRAM "
+                f"(free: {live_free:.2f} GiB); closing browser/IDE improves speed ~2×."
             )
             if clamped_from is not None:
-                vram_warning += f" (--max-vram otomatik {clamped_from:.2f} -> {max_vram:.2f} GiB çekildi)"
+                vram_warning += f" (--max-vram auto-clamped {clamped_from:.2f} -> {max_vram:.2f} GiB)"
 
     env_p2: dict[str, str] = {
         "SD_LOADER_FAST_POLL": "1",
@@ -774,9 +774,9 @@ def run_t2i_first_frame(
     console = ui_console.make_console() if use_rich else None
 
     if use_rich and console is not None:
-        status_cm = console.status("[bold cyan]Z-Image-Turbo ilk kare üretiliyor (Qwen3-4B CPU -> 6B DiT)...[/bold cyan]", spinner="dots")
+        status_cm = console.status("[bold cyan]Generating first frame with Z-Image-Turbo (Qwen3-4B CPU -> 6B DiT)...[/bold cyan]", spinner="dots")
     else:
-        print("[PicoVid] Z-Image-Turbo ilk kare üretiliyor...", flush=True)
+        print("[PicoVid] Generating first frame with Z-Image-Turbo...", flush=True)
         status_cm = None
 
     rc = 1
@@ -805,13 +805,13 @@ def run_t2i_first_frame(
                     m_pb = ui_console.RE_PROGRESS_BAR.search(clean)
                     if m_pb and "=" in line:
                         status_cm.update(
-                            f"[bold cyan]Z-Image-Turbo örnekleme: adım {m_pb.group(1)}/{m_pb.group(2)} "
+                            f"[bold cyan]Z-Image-Turbo sampling: step {m_pb.group(1)}/{m_pb.group(2)} "
                             f"({m_pb.group(3)} {m_pb.group(4)})...[/bold cyan]"
                         )
                     elif "computing condition graph completed" in clean:
-                        status_cm.update("[bold cyan]Z-Image-Turbo: metin kodlandı, 6B DiT çalışıyor...[/bold cyan]")
+                        status_cm.update("[bold cyan]Z-Image-Turbo: text encoded, running 6B DiT...[/bold cyan]")
                     elif "decoding" in clean.lower() or "vae_decode" in clean.lower():
-                        status_cm.update("[bold cyan]Z-Image-Turbo: VAE görsel çözümleniyor...[/bold cyan]")
+                        status_cm.update("[bold cyan]Z-Image-Turbo: decoding image via VAE...[/bold cyan]")
             rc = proc.wait()
     finally:
         if status_cm is not None:
@@ -897,7 +897,7 @@ def main() -> int:
             try:
                 wiz = ui_console.run_interactive_wizard(hw, select_profile)
             except KeyboardInterrupt:
-                print("\n[PicoVid] İptal edildi.")
+                print("\n[PicoVid] Cancelled.")
                 return 130
             args.engine = wiz.get("engine", args.engine)
             args.mode = wiz["mode"]
@@ -930,18 +930,18 @@ def main() -> int:
         w32 = max(256, (args.width // 32) * 32)
         h32 = max(256, (args.height // 32) * 32)
         if (w32, h32) != (args.width, args.height):
-            print(f"[PicoVid] LTX-2.3 için çözünürlük 32'nin katına yuvarlandı: {args.width}x{args.height} -> {w32}x{h32}", file=sys.stderr)
+            print(f"[PicoVid] Snapped LTX-2.3 resolution to multiple of 32: {args.width}x{args.height} -> {w32}x{h32}", file=sys.stderr)
             args.width, args.height = w32, h32
         f_ltx = snap_ltx23_frames(args.frames)
         if f_ltx != args.frames:
-            print(f"[PicoVid] LTX-2.3 için kare sayısı 8k+1 kuralına yuvarlandı: {args.frames} -> {f_ltx}", file=sys.stderr)
+            print(f"[PicoVid] Snapped LTX-2.3 frame count to 8k+1 rule: {args.frames} -> {f_ltx}", file=sys.stderr)
             args.frames = f_ltx
     elif is_5b:
         # Wan 2.2 TI2V-5B requires 32-aligned spatial dimensions (16x VAE * 2x patch)
         w32 = max(64, (args.width // 32) * 32)
         h32 = max(64, (args.height // 32) * 32)
         if (w32, h32) != (args.width, args.height):
-            print(f"[PicoVid] 5B için çözünürlük 32'nin katına yuvarlandı: {args.width}x{args.height} -> {w32}x{h32}", file=sys.stderr)
+            print(f"[PicoVid] Snapped 5B resolution to multiple of 32: {args.width}x{args.height} -> {w32}x{h32}", file=sys.stderr)
             args.width, args.height = w32, h32
 
     if args.cinema_hd:
@@ -964,7 +964,7 @@ def main() -> int:
     if args.extend_video is not None:
         base_vid = args.extend_video.resolve()
         if not base_vid.exists() and not args.dry_run:
-            print(f"HATA: Uzatılacak video bulunamadı: {base_vid}", file=sys.stderr)
+            print(f"ERROR: Video to extend not found: {base_vid}", file=sys.stderr)
             return 2
         if args.dry_run:
             print(json.dumps({
@@ -1019,7 +1019,7 @@ def main() -> int:
                 sub_cmd.append("--raw-logs")
             if args.verbose:
                 sub_cmd.append("--verbose")
-            print(f"[PicoVid Uzatma] '{base_vid.name}' ({base_w}x{base_h} @ {base_fps:.1f}fps) son karesinden uzatılıyor...", flush=True)
+            print(f"[PicoVid Extend] Extending '{base_vid.name}' ({base_w}x{base_h} @ {base_fps:.1f}fps) from its last frame...", flush=True)
             ext_env = os.environ.copy()
             ext_env["PYTHONUNBUFFERED"] = "1"
             p_ext = subprocess.run(sub_cmd, env=ext_env)
@@ -1027,7 +1027,7 @@ def main() -> int:
                 return p_ext.returncode or 1
             out_mp4 = args.output.resolve()
             info = postprocess.stitch_video_segments([base_vid, new_seg_mp4], out_mp4, fps=base_fps, drop_overlap_frames=1, crf=15)
-            print(f"[PicoVid Uzatma] TAMAMLANDI -> {out_mp4} ({info['total_frames']}f · {info['duration_sec']}s, Sınır PSNR: {info['seam_psnr_db']} dB)")
+            print(f"[PicoVid Extend] COMPLETED -> {out_mp4} ({info['total_frames']}f · {info['duration_sec']}s, Seam PSNR: {info['seam_psnr_db']} dB)")
             return 0
         finally:
             shutil.rmtree(ext_dir, ignore_errors=True)
@@ -1087,10 +1087,10 @@ def main() -> int:
                     studio_t2i_plan = build_t2i_plan(hw, reg, sd_cli, studio_prompt, args.width, args.height, args.t2i_steps, studio_seed, first_frame_png)
                     rc_t2i, el_t2i, _, _ = run_t2i_first_frame(studio_t2i_plan, hw, first_frame_png.with_suffix(".t2i.log"), echo_raw=echo_raw)
                     if rc_t2i != 0 or not first_frame_png.exists():
-                        print(f"HATA: Z-Image-Turbo ilk kare üretimi başarısız (exit={rc_t2i})", file=sys.stderr)
+                        print(f"ERROR: Z-Image-Turbo first-frame generation failed (exit={rc_t2i})", file=sys.stderr)
                         return rc_t2i or 1
                     if args.auto_approve or not ui_console.is_interactive_tty():
-                        print(f"[Stüdyo] İlk kare hazır ({el_t2i:.1f}s): {first_frame_png}", flush=True)
+                        print(f"[Studio] First frame ready ({el_t2i:.1f}s): {first_frame_png}", flush=True)
                         break
                     action, extra = ui_console.ask_studio_frame_decision(first_frame_png, studio_prompt, studio_seed, el_t2i, use_rich=use_rich)
                     if action == "proceed":
@@ -1106,7 +1106,7 @@ def main() -> int:
                             seg_prompts = [extra for _ in range(seg_count)]
                         studio_seed = random.randint(1, 2_147_483_647)
                         continue
-                    print(f"[Stüdyo] İptal edildi. İlk kare korundu: {first_frame_png}")
+                    print(f"[Studio] Cancelled. First frame kept: {first_frame_png}")
                     return 0
                 cur_init_img = first_frame_png
                 first_seg_mode = "i2v"
@@ -1118,7 +1118,7 @@ def main() -> int:
                 seg_out = chain_dir / f"segment_{seg_num:02d}.mp4"
                 seg_seed = args.seed + s_idx
                 print(
-                    f"\n[PicoVid Zincir] Bölüm {seg_num}/{seg_count} başlıyor "
+                    f"\n[PicoVid Chain] Segment {seg_num}/{seg_count} starting "
                     f"({engine.upper()} · {seg_mode.upper()} · {args.width}x{args.height} x {args.frames}f · seed={seg_seed})...",
                     flush=True,
                 )
@@ -1171,7 +1171,7 @@ def main() -> int:
                 seg_env["PYTHONUNBUFFERED"] = "1"
                 p_seg = subprocess.run(sub_cmd, env=seg_env)
                 if p_seg.returncode != 0 or not seg_out.exists():
-                    print(f"HATA: Bölüm {seg_num}/{seg_count} başarısız oldu (exit={p_seg.returncode}).", file=sys.stderr)
+                    print(f"ERROR: Segment {seg_num}/{seg_count} failed (exit={p_seg.returncode}).", file=sys.stderr)
                     return p_seg.returncode or 1
                 seg_outputs.append(seg_out)
 
@@ -1196,16 +1196,16 @@ def main() -> int:
                             rm, rs = postprocess._compute_lab_stats(ref_im)
                             cv2.imwrite(str(handoff_png), postprocess._apply_lab_color_anchor(ho_im, rm, rs, strength=0.45))
                     cur_init_img = handoff_png
-                    print(f"[PicoVid Zincir] Bölüm {seg_num} son karesi sonraki bölüme aktarıldı (Lab renk çıpası aktif): {handoff_png.name}", flush=True)
+                    print(f"[PicoVid Chain] Segment {seg_num} last frame handed off to next segment (Lab color anchor active): {handoff_png.name}", flush=True)
 
             stitched_mp4 = chain_dir / "stitched_raw.mp4" if use_postprocess else out_mp4
-            print(f"\n[PicoVid Zincir] {seg_count} bölüm kesintisiz birleştiriliyor (çift sınır kareleri atılıyor)...", flush=True)
+            print(f"\n[PicoVid Chain] Stitching {seg_count} segments seamlessly (dropping duplicate boundary frames)...", flush=True)
             stitch_info = postprocess.stitch_video_segments(seg_outputs, stitched_mp4, fps=float(args.fps), drop_overlap_frames=1, crf=15)
 
             if use_postprocess:
                 ok_u, ok_r = postprocess.ensure_tools_installed(args.upscale >= 2, args.rife >= 2)
                 if ok_u and ok_r:
-                    print(f"[PicoVid Zincir] Tüm {stitch_info['duration_sec']}s film için tek seferde Sinema HD / 32fps uygulanıyor...", flush=True)
+                    print(f"[PicoVid Chain] Applying Cinema HD / 32fps to the full {stitch_info['duration_sec']}s clip...", flush=True)
                     pp_res = postprocess.enhance_video(
                         stitched_mp4,
                         out_mp4,
@@ -1223,10 +1223,10 @@ def main() -> int:
 
             total_el = time.monotonic() - seg_t0
             print("-" * 64)
-            print(f"[PicoVid Zincir] TAMAMLANDI ({total_el:.1f}s) · {seg_count} bölüm -> {stitch_info['duration_sec']}s kesintisiz video")
-            print(f"  - Çıktı    : {out_mp4} ({final_desc}) [{ui_console.format_file_size(out_mp4)}]")
+            print(f"[PicoVid Chain] COMPLETED ({total_el:.1f}s) · {seg_count} segments -> {stitch_info['duration_sec']}s seamless video")
+            print(f"  - Output   : {out_mp4} ({final_desc}) [{ui_console.format_file_size(out_mp4)}]")
             if stitch_info.get("seam_psnr_db"):
-                print(f"  - Sınır PSNR: {stitch_info['seam_psnr_db']} dB (kare-kilitli geçiş)")
+                print(f"  - Seam PSNR: {stitch_info['seam_psnr_db']} dB (frame-locked transition)")
             print("-" * 64)
             if interactive_mode and out_mp4.exists():
                 ui_console.ask_open_video(out_mp4, use_rich=use_rich)
@@ -1240,8 +1240,8 @@ def main() -> int:
             ltx_probe_cli = resolve_ltx23_sd_cli(hw["backend"], args.sd_cli)
             if not ltx_probe_cli.exists():
                 print(
-                    f"HATA: LTX-2.3 motoru bulunamadı: {ltx_probe_cli}\n"
-                    f"Kurulum için: setup.cmd veya engine/sd-vulkan-ltx2/sd-cli.exe",
+                    f"ERROR: LTX-2.3 engine not found: {ltx_probe_cli}\n"
+                    f"Run setup.cmd or install engine/sd-vulkan-ltx2/sd-cli.exe",
                     file=sys.stderr,
                 )
                 return 2
@@ -1271,15 +1271,15 @@ def main() -> int:
             return 0
         for label, p in [("sd-cli", sd_cli), *t2i_plan["models"].items()]:
             if not p.exists():
-                print(f"HATA: Eksik {label}: {p}\nİndirmek için: py scripts/download_models.py --profile t2i", file=sys.stderr)
+                print(f"ERROR: Missing {label}: {p}\nTo download: py scripts/download_models.py --profile t2i", file=sys.stderr)
                 return 2
         out_png.parent.mkdir(parents=True, exist_ok=True)
         rc, elapsed, p_ded, p_shr = run_t2i_first_frame(t2i_plan, hw, out_png.with_suffix(".log"), echo_raw=echo_raw)
         if rc != 0 or not out_png.exists():
-            print(f"HATA: Z-Image-Turbo başarısız (exit={rc})", file=sys.stderr)
+            print(f"ERROR: Z-Image-Turbo failed (exit={rc})", file=sys.stderr)
             return rc or 1
         vram_s = f" | Peak VRAM: Ded {p_ded:.0f} MiB, Shr {p_shr:.0f} MiB" if p_ded else ""
-        print(f"[PicoVid] Z-Image-Turbo hazır ({elapsed:.1f}s{vram_s}): {out_png}")
+        print(f"[PicoVid] Z-Image-Turbo ready ({elapsed:.1f}s{vram_s}): {out_png}")
         return 0
 
     # Studio Mode: Step 1 -> Generate & Approve First Frame with Z-Image-Turbo
@@ -1294,7 +1294,7 @@ def main() -> int:
         if not args.dry_run:
             for label, p in [("sd-cli", sd_cli), *studio_t2i_plan["models"].items()]:
                 if not p.exists():
-                    print(f"HATA: Stüdyo Modu için eksik {label}: {p}\nİndirmek için: py scripts/download_models.py --profile t2i", file=sys.stderr)
+                    print(f"ERROR: Missing {label} for Studio Mode: {p}\nTo download: py scripts/download_models.py --profile t2i", file=sys.stderr)
                     return 2
             first_frame_png.parent.mkdir(parents=True, exist_ok=True)
             while True:
@@ -1303,11 +1303,11 @@ def main() -> int:
                     studio_t2i_plan, hw, first_frame_png.with_suffix(".t2i.log"), echo_raw=echo_raw
                 )
                 if rc != 0 or not first_frame_png.exists():
-                    print(f"HATA: Z-Image-Turbo ilk kare üretimi başarısız (exit={rc})", file=sys.stderr)
+                    print(f"ERROR: Z-Image-Turbo first-frame generation failed (exit={rc})", file=sys.stderr)
                     return rc or 1
 
                 if args.auto_approve or not ui_console.is_interactive_tty():
-                    print(f"[Stüdyo] İlk kare hazır ({elapsed:.1f}s, seed={studio_seed}): {first_frame_png}")
+                    print(f"[Studio] First frame ready ({elapsed:.1f}s, seed={studio_seed}): {first_frame_png}")
                     break
 
                 action, extra = ui_console.ask_studio_frame_decision(
@@ -1324,7 +1324,7 @@ def main() -> int:
                     studio_prompt = extra
                     studio_seed = random.randint(1, 2_147_483_647)
                     continue
-                print(f"[Stüdyo] İptal edildi. İlk kare korundu: {first_frame_png}")
+                print(f"[Studio] Cancelled. First frame kept: {first_frame_png}")
                 return 0
 
             args.init_img = first_frame_png
@@ -1383,8 +1383,8 @@ def main() -> int:
         if not args.no_hires_x2 and not can_hires_x2 and not args.dry_run:
             if (args.width // 2) % 32 != 0 or (args.height // 2) % 32 != 0:
                 print(
-                    f"[PicoVid LTX-2.3] Not: {args.width}x{args.height} yarı boyutu 32'nin katı değil; "
-                    f"Hires-x2 devre dışı (2x hız için 768x448 veya 640x384 önerilir).",
+                    f"[PicoVid LTX-2.3] Note: half resolution of {args.width}x{args.height} is not divisible by 32; "
+                    f"Hires-x2 disabled (use 768x448 or 640x384 for 2x speedup).",
                     file=sys.stderr,
                 )
         gen_w = (args.width // 2) if can_hires_x2 else args.width
@@ -1452,16 +1452,16 @@ def main() -> int:
         if use_audio:
             req_ltx.append(("audio-vae", ltx_aud))
         if is_i2v_ltx and (args.init_img is None or not args.init_img.exists()):
-            print(f"HATA: LTX-2.3 I2V için geçerli --init-img gerekli: {args.init_img}", file=sys.stderr)
+            print(f"ERROR: Valid --init-img required for LTX-2.3 I2V: {args.init_img}", file=sys.stderr)
             return 2
         for lbl, pth in req_ltx:
             if not pth.exists():
-                print(f"HATA: LTX-2.3 için eksik {lbl}: {pth}\nİndirmek için: py scripts/download_models.py --profile ltx23", file=sys.stderr)
+                print(f"ERROR: Missing {lbl} for LTX-2.3: {pth}\nTo download: py scripts/download_models.py --profile ltx23", file=sys.stderr)
                 return 2
 
         print(
-            f"[PicoVid LTX-2.3] Başlıyor: {mode.upper()} · {args.width}x{args.height} · {args.frames}f @ {args.fps}fps · "
-            f"{'Ses + Video' if use_audio else 'Sessiz Video'} · 8 adım (Distilled 1.1)",
+            f"[PicoVid LTX-2.3] Starting: {mode.upper()} · {args.width}x{args.height} · {args.frames}f @ {args.fps}fps · "
+            f"{'Audio + Video' if use_audio else 'Silent Video'} · 8 steps (Distilled 1.1)",
             flush=True,
         )
         t0_ltx = time.monotonic()
@@ -1495,7 +1495,7 @@ def main() -> int:
                 ltx_prewarm_thr.join(timeout=1.5)
 
         if rc_ltx != 0 or not raw_webm.exists():
-            print(f"HATA: LTX-2.3 üretimi başarısız (exit={rc_ltx}). Detay: {log_path}", file=sys.stderr)
+            print(f"ERROR: LTX-2.3 generation failed (exit={rc_ltx}). Details: {log_path}", file=sys.stderr)
             return rc_ltx or 1
 
         if out_mp4.suffix.lower() == ".webm":
@@ -1505,8 +1505,8 @@ def main() -> int:
             ok_u, ok_r = postprocess.ensure_tools_installed(args.upscale >= 2, args.rife >= 2)
             if ok_u and ok_r:
                 print(
-                    f"[PicoVid LTX-2.3] Sinema HD başlıyor ({args.upscale}x Vulkan AI Upscale · "
-                    f"{args.rife}x Akıcılık · 48kHz Stereo Ses korunuyor)...",
+                    f"[PicoVid LTX-2.3] Starting Cinema HD ({args.upscale}x Vulkan AI Upscale · "
+                    f"{args.rife}x Interpolation · preserving 48kHz Stereo Audio)...",
                     flush=True,
                 )
                 pp_res = postprocess.enhance_video(
@@ -1516,7 +1516,7 @@ def main() -> int:
                     rife_factor=args.rife,
                     upscale_model=args.upscale_model,
                     crf=15,
-                    progress_cb=lambda pct, msg: print(f"[Sinema HD {pct:4.0f}%] {msg}", flush=True),
+                    progress_cb=lambda pct, msg: print(f"[Cinema HD {pct:4.0f}%] {msg}", flush=True),
                 )
                 raw_webm.unlink(missing_ok=True)
                 final_ltx = out_mp4
@@ -1536,7 +1536,7 @@ def main() -> int:
             else:
                 final_ltx = raw_webm
         el_ltx = time.monotonic() - t0_ltx
-        print(f"[PicoVid LTX-2.3] TAMAMLANDI ({el_ltx:.1f}s · {enc_ltx}): {final_ltx} [{ui_console.format_file_size(final_ltx)}]", flush=True)
+        print(f"[PicoVid LTX-2.3] COMPLETED ({el_ltx:.1f}s · {enc_ltx}): {final_ltx} [{ui_console.format_file_size(final_ltx)}]", flush=True)
         return 0
 
     # Video Stage (T2V or I2V / Studio Stage 2 — supports both Wan 2.2 TI2V-5B and 14B)
@@ -1704,18 +1704,18 @@ def main() -> int:
         req_checks.append(("high-noise-model", high_model))
     if is_i2v:
         if args.init_img is None or not args.init_img.exists():
-            print(f"HATA: I2V için geçerli --init-img gerekli: {args.init_img}", file=sys.stderr)
+            print(f"ERROR: Valid --init-img required for I2V: {args.init_img}", file=sys.stderr)
             return 2
     for label, p in req_checks:
         if not p.exists():
             hint = " --profile i2v" if is_i2v else " --profile t2v"
-            print(f"HATA: Eksik {label}: {p}\nİndirmek için: py scripts/download_models.py{hint}", file=sys.stderr)
+            print(f"ERROR: Missing {label}: {p}\nTo download: py scripts/download_models.py{hint}", file=sys.stderr)
             return 2
     if args.fast_preview and not taesd_path.exists():
-        print(f"HATA: --fast-preview için TAEHV gerekli: {taesd_path}", file=sys.stderr)
+        print(f"ERROR: TAEHV is required for --fast-preview: {taesd_path}", file=sys.stderr)
         return 2
     if not args.fast_preview and not vae_path.exists():
-        print(f"HATA: Eksik Wan 2.1 VAE: {vae_path}", file=sys.stderr)
+        print(f"ERROR: Missing Wan 2.1 VAE: {vae_path}", file=sys.stderr)
         return 2
 
     if not echo_raw:
@@ -1723,9 +1723,9 @@ def main() -> int:
 
     vram_sampler = ui_console.LiveVramSampler(total_vram_gib=hw["vram_total_gib"], interval_sec=1.0)
     stage4_lbl = (
-        f"4. Sinema HD ({args.width*args.upscale}x{args.height*args.upscale} · {args.fps*args.rife}fps)"
+        f"4. Cinema HD ({args.width*args.upscale}x{args.height*args.upscale} · {args.fps*args.rife}fps)"
         if use_postprocess
-        else "4. H.264 MP4 Paketleme"
+        else "4. H.264 MP4 Packaging"
     )
     dash_cfg = ui_console.DashboardConfig(
         gpu_name=hw["gpu_name"],
@@ -1757,7 +1757,7 @@ def main() -> int:
     if not args.dry_run and use_postprocess:
         ok_u, ok_r = postprocess.ensure_tools_installed(args.upscale >= 2, args.rife >= 2)
         if not (ok_u and ok_r):
-            print("[PicoVid] Uyarı: Sinema HD araçları kurulamadı; standart H.264 çıkışına düşülüyor.", file=sys.stderr)
+            print("[PicoVid] Warning: Cinema HD tools could not be installed; falling back to standard H.264 output.", file=sys.stderr)
             use_postprocess = False
 
     vram_sampler.start()
@@ -1795,7 +1795,7 @@ def main() -> int:
                 lf.flush()
                 log_so_far = log_path.read_text(encoding="utf-8", errors="replace")
                 if "sampling started:" not in log_so_far:
-                    dashboard.set_status("GPU vae_encode başarısız; güvenli CPU vae_encode ile yeniden deneniyor...")
+                    dashboard.set_status("GPU vae_encode failed; retrying safely with CPU vae_encode...")
                     dashboard.start_stage("te", detail="CPU vae_encode fallback...", determinate=False)
                     lf.write("\n=== FALLBACK: Retrying Process 1 with --backend te=cpu,vae=cpu ===\n")
                     lf.flush()
@@ -1811,8 +1811,8 @@ def main() -> int:
                         echo_raw=echo_raw,
                     )
             if rc != 0:
-                err_msg = f"Süreç 1 (DiT) çıkış kodu {rc} ile başarısız oldu"
-                dashboard.fail_stage("dit", detail=f"Çıkış kodu {rc}")
+                err_msg = f"Process 1 (DiT) failed with exit code {rc}"
+                dashboard.fail_stage("dit", detail=f"Exit code {rc}")
                 return rc
 
             if two_proc_vae:
@@ -1886,12 +1886,12 @@ fn main() {{
                     echo_raw=echo_raw,
                 )
                 if rc != 0:
-                    err_msg = f"Süreç 2 (Wan 2.1 VAE) çıkış kodu {rc} ile başarısız oldu"
-                    dashboard.fail_stage("vae", detail=f"Çıkış kodu {rc}")
+                    err_msg = f"Process 2 (Wan 2.1 VAE) failed with exit code {rc}"
+                    dashboard.fail_stage("vae", detail=f"Exit code {rc}")
                     return rc
 
-        dashboard.start_stage("mp4", detail="Sinema HD / H.264 başlıyor...", determinate=True)
-        dashboard.set_status("Çıktı paketleniyor...")
+        dashboard.start_stage("mp4", detail="Starting Cinema HD / H.264...", determinate=True)
+        dashboard.set_status("Packaging output...")
         if raw_avi.exists():
             if use_postprocess:
                 def _pp_cb(pct: float, msg: str) -> None:
@@ -1910,28 +1910,28 @@ fn main() {{
                 final_output = out_mp4
                 encoder_label = f"CinemaHD {pp_res['out_res']}@{pp_res['out_fps']}fps CRF15"
                 dashboard.finish_stage("mp4", detail=f"{pp_res['out_res']} · {pp_res['out_fps']}fps ({pp_res['total_sec']}s)")
-                dashboard.set_status(f"Sinema HD hazır: {out_mp4.name} ({pp_res['out_res']} @ {pp_res['out_fps']}fps)")
+                dashboard.set_status(f"Cinema HD ready: {out_mp4.name} ({pp_res['out_res']} @ {pp_res['out_fps']}fps)")
             else:
-                dashboard.update_stage("mp4", pct=40.0, detail="libx264 (CRF 16) kodlanıyor...")
+                dashboard.update_stage("mp4", pct=40.0, detail="Encoding libx264 (CRF 16)...")
                 encoder_label = convert_avi_to_mp4(raw_avi, out_mp4)
                 if encoder_label != "avi_only":
                     raw_avi.unlink(missing_ok=True)
                     final_output = out_mp4
                     dashboard.finish_stage("mp4", detail=f"{out_mp4.name} ({encoder_label})")
-                    dashboard.set_status(f"MP4 hazır: {out_mp4.name}")
+                    dashboard.set_status(f"MP4 ready: {out_mp4.name}")
                 else:
                     final_output = raw_avi
                     dashboard.finish_stage("mp4", detail=f"{raw_avi.name} (AVI)")
-                    dashboard.set_status(f"AVI kaydedildi: {raw_avi.name}")
+                    dashboard.set_status(f"AVI saved: {raw_avi.name}")
         else:
-            err_msg = f"Beklenen ara AVI dosyası oluşmadı: {raw_avi}"
-            dashboard.fail_stage("mp4", detail="AVI bulunamadı")
+            err_msg = f"Expected intermediate AVI file was not created: {raw_avi}"
+            dashboard.fail_stage("mp4", detail="AVI not found")
             rc = 3
             return rc
 
         return 0
     except KeyboardInterrupt:
-        err_msg = "Kullanıcı tarafından iptal edildi (Ctrl+C)"
+        err_msg = "Cancelled by user (Ctrl+C)"
         rc = 130
         return rc
     finally:

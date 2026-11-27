@@ -130,9 +130,9 @@ class StudioState:
         self.job_kind: str = ""  # "t2i" | "video"
         self.job_id: str = ""
         self.started_at: float = 0.0
-        self.stage: str = "Hazır"
+        self.stage: str = "Ready"
         self.progress_pct: float = 0.0
-        self.detail: str = "Yeni üretim için hazır."
+        self.detail: str = "Ready for a new generation."
         self.logs: list[str] = []
         self.last_t2i_png: str | None = None
         self.last_t2i_seed: int | None = None
@@ -183,8 +183,8 @@ class StudioState:
                 return False
             self._cancel_requested = True
             proc = self.proc
-            self.stage = "İptal ediliyor..."
-            self.detail = "Çalışan süreç durduruluyor..."
+            self.stage = "Cancelling..."
+            self.detail = "Stopping active process..."
         if proc is not None and proc.poll() is None:
             if os.name == "nt":
                 try:
@@ -223,43 +223,43 @@ class StudioState:
                 if len(self.logs) > 200:
                     self.logs = self.logs[-200:]
 
-            # Track multi-segment chain header (e.g. "[PicoVid Zincir] Bölüm 1/2 başlıyor...")
-            m_ch = re.search(r"\[PicoVid Zincir\]\s*(Bölüm\s+\d+/\d+)", clean)
+            # Track multi-segment chain header (e.g. "[PicoVid Chain] Segment 1/2 starting...")
+            m_ch = re.search(r"\[PicoVid (?:Chain|Zincir)\]\s*((?:Segment|Bölüm)\s+\d+/\d+)", clean)
             if m_ch:
                 self._seg_prefix = m_ch.group(1) + " · "
                 self._dit_steps_done = 0
                 self._dit_last_seg = 0
-                self.stage = f"{self._seg_prefix}Başlatılıyor"
+                self.stage = f"{self._seg_prefix}Starting"
                 self.detail = clean
                 return
 
-            if "Metin Kodlama" in clean or "computing condition graph" in clean:
-                self.stage = f"{self._seg_prefix}1/4 Metin & Görsel Kodlama"
+            if "Text Encoding" in clean or "Metin Kodlama" in clean or "computing condition graph" in clean:
+                self.stage = f"{self._seg_prefix}1/4 Text & Image Encoding"
                 self.progress_pct = max(self.progress_pct, 10.0)
                 self.detail = clean
-            elif "sampling started:" in clean or "DiT Örnekleme" in clean:
+            elif "sampling started:" in clean or "DiT Sampling" in clean or "DiT Örnekleme" in clean:
                 m_st_tot = ui_console.RE_SAMPLE_START.search(clean)
                 if m_st_tot:
                     self._dit_steps_total = max(1, int(m_st_tot.group(2)))
                 self._dit_steps_done = 0
                 self._dit_last_seg = 0
-                self.stage = f"{self._seg_prefix}2/4 DiT Video Üretimi"
+                self.stage = f"{self._seg_prefix}2/4 DiT Video Generation"
                 self.progress_pct = max(self.progress_pct, 20.0)
                 self.detail = clean
             elif "sampling completed" in clean:
-                self.stage = f"{self._seg_prefix}3/4 Video & Ses VAE Decode"
+                self.stage = f"{self._seg_prefix}3/4 Video & Audio VAE Decode"
                 self.progress_pct = max(self.progress_pct, 70.0)
                 self.detail = clean
             elif "ltx audio vae decode" in clean:
-                self.stage = f"{self._seg_prefix}4/4 Ses + H.264 MP4 Paketleme"
+                self.stage = f"{self._seg_prefix}4/4 Audio + H.264 MP4 Packaging"
                 self.progress_pct = max(self.progress_pct, 90.0)
                 self.detail = clean
             elif "VAE Decode" in clean or "SD_VIDEO_LATENT_LOAD" in clean:
                 self.stage = f"{self._seg_prefix}3/4 Video VAE Decode"
                 self.progress_pct = max(self.progress_pct, 58.0)
                 self.detail = clean
-            elif "Sinema HD" in clean or "birleştiriliyor" in clean or "MP4 Paketleme" in clean:
-                self.stage = "4/4 Sinema HD & H.264 Paketleme"
+            elif "Cinema HD" in clean or "Sinema HD" in clean or "stitching" in clean.lower() or "birleştiriliyor" in clean or "MP4 Packaging" in clean or "MP4 Paketleme" in clean:
+                self.stage = "4/4 Cinema HD & H.264 Packaging"
                 self.progress_pct = max(self.progress_pct, 88.0)
                 self.detail = clean
 
@@ -280,9 +280,9 @@ class StudioState:
                 m_blk = ui_console.RE_BLOCK_NAME.search(seg_name)
                 if m_blk:
                     blk_tot = 30 if "5B" in m_seg.group(1) else 40
-                    self.detail = f"Adım {cur_step}/{self._dit_steps_total} · Blok {int(m_blk.group(1))+1}/{blk_tot} ({m_blk.group(2)}, {seg_ms:.0f} ms)"
+                    self.detail = f"Step {cur_step}/{self._dit_steps_total} · Block {int(m_blk.group(1))+1}/{blk_tot} ({m_blk.group(2)}, {seg_ms:.0f} ms)"
                 else:
-                    self.detail = f"Adım {cur_step}/{self._dit_steps_total} · {seg_name} ({seg_ms:.0f} ms)"
+                    self.detail = f"Step {cur_step}/{self._dit_steps_total} · {seg_name} ({seg_ms:.0f} ms)"
                 return
 
             m_pb = ui_console.RE_PROGRESS_BAR.search(clean)
@@ -293,25 +293,25 @@ class StudioState:
                     self._dit_steps_done = max(self._dit_steps_done, cur_i)
                     self._dit_last_seg = 0
                     self.progress_pct = 20.0 + frac * 38.0
-                    self.detail = f"DiT Adım {cur_i}/{tot_i} ({m_pb.group(3)} {m_pb.group(4)})"
+                    self.detail = f"DiT Step {cur_i}/{tot_i} ({m_pb.group(3)} {m_pb.group(4)})"
                 elif "3/4" in self.stage:
                     self.progress_pct = 58.0 + frac * 30.0
-                    self.detail = f"VAE Karo {cur_i}/{tot_i} ({m_pb.group(3)} {m_pb.group(4)})"
+                    self.detail = f"VAE Tile {cur_i}/{tot_i} ({m_pb.group(3)} {m_pb.group(4)})"
                 elif self.job_kind == "t2i":
                     self.progress_pct = 15.0 + frac * 80.0
-                    self.detail = f"Z-Image-Turbo Adım {cur_i}/{tot_i} ({m_pb.group(3)} {m_pb.group(4)})"
+                    self.detail = f"Z-Image-Turbo Step {cur_i}/{tot_i} ({m_pb.group(3)} {m_pb.group(4)})"
 
     def start_job(self, kind: str, cmd: list[str], out_rel: str, seed: int | None = None) -> tuple[bool, str]:
         with self.lock:
             if self.job_running:
-                return False, "Zaten aktif bir üretim çalışıyor. Önce durdurun veya bitmesini bekleyin."
+                return False, "A generation job is already running. Stop it or wait for completion first."
             self.job_running = True
             self.job_kind = kind
             self.job_id = datetime.now().strftime("%H%M%S")
             self.started_at = time.monotonic()
-            self.stage = "İlk Kare Üretiliyor (Z-Image-Turbo)..." if kind == "t2i" else "Video Motoru Başlatılıyor..."
+            self.stage = "Generating First Frame (Z-Image-Turbo)..." if kind == "t2i" else "Starting Video Engine..."
             self.progress_pct = 5.0
-            self.detail = "Alt süreç başlatılıyor..."
+            self.detail = "Launching subprocess..."
             self.logs = [f"$ {' '.join(cmd)}"]
             self.last_error = None
             self._cancel_requested = False
@@ -344,7 +344,7 @@ class StudioState:
                     self._append_log(line)
                 rc = proc.wait()
             except Exception as exc:
-                self._append_log(f"HATA: {exc}")
+                self._append_log(f"ERROR: {exc}")
                 rc = 1
             finally:
                 with self.lock:
@@ -353,30 +353,30 @@ class StudioState:
                     self.job_running = False
                     out_abs = (REPO_ROOT / out_rel) if out_rel else None
                     if was_cancel:
-                        self.stage = "İptal Edildi"
-                        self.detail = "Üretim kullanıcı tarafından durduruldu."
+                        self.stage = "Cancelled"
+                        self.detail = "Generation stopped by user."
                     elif rc == 0 and kind == "download":
                         self.progress_pct = 100.0
-                        self.stage = "Tamamlandı"
+                        self.stage = "Completed"
                         el = time.monotonic() - self.started_at
-                        self.detail = f"Model indirme tamamlandı ({el:.1f} sn)."
+                        self.detail = f"Model download completed ({el:.1f}s)."
                     elif rc == 0 and out_abs is not None and out_abs.exists():
                         self.progress_pct = 100.0
-                        self.stage = "Tamamlandı"
+                        self.stage = "Completed"
                         el = time.monotonic() - self.started_at
-                        self.detail = f"Başarıyla tamamlandı ({el:.1f} sn): {out_abs.name}"
+                        self.detail = f"Completed successfully ({el:.1f}s): {out_abs.name}"
                         if kind == "t2i":
                             self.last_t2i_png = out_rel.replace("\\", "/")
                             self.last_t2i_seed = seed
                         else:
                             self.last_video_rel = out_rel.replace("\\", "/")
                     else:
-                        self.stage = "Hata"
-                        self.last_error = f"Süreç çıkış kodu {rc} ile sonlandı."
+                        self.stage = "Error"
+                        self.last_error = f"Process exited with code {rc}."
                         self.detail = self.last_error
 
         threading.Thread(target=_runner, name="picovid_web_job", daemon=True).start()
-        return True, "Başlatıldı"
+        return True, "Started"
 
 
 def list_gallery_items() -> list[dict[str, Any]]:
@@ -409,11 +409,11 @@ def list_gallery_items() -> list[dict[str, Any]]:
 
 
 INDEX_HTML = r"""<!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PicoVid v0.6.0 · AI Video Studio</title>
+<title>PicoVid v0.7.0 · AI Video Studio</title>
 <style>
 :root{--bg:#090d16;--panel:#111827;--panel2:#162033;--border:#24324a;--accent:#38bdf8;--accent2:#818cf8;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--text:#f1f5f9;--muted:#94a3b8}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0%,#132038,#090d16 55%);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif;min-height:100vh}
@@ -469,8 +469,8 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent)}
 <header>
   <div class="brand">
     <div class="logo">PicoVid Studio</div>
-    <span class="badge">v0.5.0 · LTX-2.3 22B Ses+Video</span>
-    <span id="gpuName" style="font-size:12px;color:var(--muted)">GPU okunuyor...</span>
+    <span class="badge">v0.7.0 · LTX-2.3 22B Audio+Video</span>
+    <span id="gpuName" style="font-size:12px;color:var(--muted)">Detecting GPU...</span>
     <span id="modelBadges" style="display:flex;gap:6px;flex-wrap:wrap"></span>
   </div>
   <div class="vram-strip">
@@ -482,138 +482,138 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent)}
 <main>
   <section class="card">
     <div class="tabs">
-      <button class="tab active" data-mode="studio" onclick="setMode('studio')">Stüdyo (T2I→V)</button>
-      <button class="tab" data-mode="t2v" onclick="setMode('t2v')">Metinden Video</button>
-      <button class="tab" data-mode="i2v" onclick="setMode('i2v')">Görselden Video</button>
+      <button class="tab active" data-mode="studio" onclick="setMode('studio')">Studio (T2I→V)</button>
+      <button class="tab" data-mode="t2v" onclick="setMode('t2v')">Text to Video</button>
+      <button class="tab" data-mode="i2v" onclick="setMode('i2v')">Image to Video</button>
     </div>
 
     <div id="i2vUploadWrap" class="hidden">
-      <label>Giriş Görseli (--init-img)</label>
+      <label>Input Image (--init-img)</label>
       <div class="dropzone" onclick="document.getElementById('fileIn').click()">
-        <div id="dropText">Görsel seçmek için tıklayın (PNG / JPG / WEBP)</div>
+        <div id="dropText">Click to select an image (PNG / JPG / WEBP)</div>
         <img id="uploadPreview" class="hidden">
       </div>
       <input id="fileIn" type="file" accept="image/*" class="hidden" onchange="uploadImage(this.files[0])">
     </div>
 
-    <label>Sahne / Video Prompt'u (İngilizce önerilir)</label>
+    <label>Scene / Video Prompt (English recommended)</label>
     <textarea id="prompt" rows="3" placeholder="A cinematic wide shot of the Bosphorus at golden hour, historic ferry gliding across sparkling water, 35mm film">A cinematic wide shot of the Bosphorus at golden hour, historic ferry gliding across sparkling water, seagulls flying, 35mm film</textarea>
 
     <div class="chips" id="motionChips">
-      <span class="chip" data-add="slow smooth cinematic camera push-in, gentle atmospheric motion">+ Yavaş Zoom</span>
+      <span class="chip" data-add="slow smooth cinematic camera push-in, gentle atmospheric motion">+ Slow Zoom</span>
       <span class="chip" data-add="sweeping aerial drone glide forward, natural wind and water motion">+ Drone Pan</span>
-      <span class="chip" data-add="dynamic cinematic tracking shot, dramatic realistic motion">+ Aksiyon Takip</span>
-      <span class="chip" data-add="steady tripod shot, subtle lifelike natural motion">+ Sabit Kamera</span>
+      <span class="chip" data-add="dynamic cinematic tracking shot, dramatic realistic motion">+ Action Track</span>
+      <span class="chip" data-add="steady tripod shot, subtle lifelike natural motion">+ Steady Cam</span>
     </div>
 
     <div class="row2">
       <div>
-        <label>Video Motoru</label>
+        <label>Video Engine</label>
         <select id="engine" onchange="onEngineChange()">
-          <option value="ltx23" selected>LTX-2.3 22B Distilled (Ses + Video ★)</option>
-          <option value="5b">Wan 2.2 TI2V-5B (Eski)</option>
-          <option value="14b">Wan 2.2 14B (Eski)</option>
+          <option value="ltx23" selected>LTX-2.3 22B Distilled (Audio + Video ★)</option>
+          <option value="5b">Wan 2.2 TI2V-5B (Legacy)</option>
+          <option value="14b">Wan 2.2 14B (Legacy)</option>
         </select>
       </div>
       <div>
-        <label>Çözünürlük</label>
+        <label>Resolution</label>
         <select id="res">
-          <option value="640x384" selected>640×384 (Sinema 5sn · HD→1280×768)</option>
-          <option value="768x448">768×448 (Yüksek Detay 16:9)</option>
-          <option value="576x320">576×320 (Hızlı 5sn)</option>
-          <option value="832x480">832×480 (Doğal 480p / Z-Image)</option>
+          <option value="640x384" selected>640×384 (Cinema 5s · HD→1280×768)</option>
+          <option value="768x448">768×448 (High Detail 16:9)</option>
+          <option value="576x320">576×320 (Fast 5s)</option>
+          <option value="832x480">832×480 (Native 480p / Z-Image)</option>
         </select>
       </div>
     </div>
 
     <div class="row2">
       <div>
-        <label>Süre / Kare Sayısı</label>
+        <label>Duration / Frame Count</label>
         <select id="durationPreset">
-          <option value="81:1:16" selected>5.1 sn (81f @16fps · Ses+Video) ★</option>
-          <option value="49:1:16">3.1 sn (49f @16fps · Ses+Video)</option>
-          <option value="25:1:24">1.0 sn (25f @24fps · Hızlı Test)</option>
-          <option value="121:1:24">5.0 sn (121f @24fps · Maksimum)</option>
+          <option value="81:1:16" selected>5.1s (81f @16fps · Audio+Video) ★</option>
+          <option value="49:1:16">3.1s (49f @16fps · Audio+Video)</option>
+          <option value="25:1:24">1.0s (25f @24fps · Quick Test)</option>
+          <option value="121:1:24">5.0s (121f @24fps · Maximum)</option>
         </select>
       </div>
       <div>
-        <label>Seed (boş = rastgele)</label>
-        <input id="seed" type="text" placeholder="Rastgele">
+        <label>Seed (blank = random)</label>
+        <input id="seed" type="text" placeholder="Random">
       </div>
     </div>
 
     <div id="segPromptsWrap" class="hidden">
-      <label>Bölüm Bazlı Yönetmen Prompt'ları (opsiyonel, | ile ayırın)</label>
-      <input id="segPrompts" type="text" placeholder="Bölüm 1 sahnesi | Bölüm 2 kamera açısı | Bölüm 3 final">
+      <label>Per-Segment Director Prompts (optional, separated by |)</label>
+      <input id="segPrompts" type="text" placeholder="Segment 1 scene | Segment 2 camera angle | Segment 3 finale">
     </div>
 
     <div class="checks">
-      <label class="chk"><input type="checkbox" id="cinemaHd" checked> Sinema HD + 32fps</label>
-      <label class="chk"><input type="checkbox" id="fastPreview"> Ultra-Hızlı Önizleme (TAEW ~2sn)</label>
+      <label class="chk"><input type="checkbox" id="cinemaHd" checked> Cinema HD + 32fps</label>
+      <label class="chk"><input type="checkbox" id="fastPreview"> Ultra-Fast Preview (TAEW ~2s)</label>
     </div>
 
     <div id="studioBtnGroup">
-      <button class="btn btn-primary" id="btnGenFrame" onclick="runT2I()">1. İlk Kareyi Üret (Z-Image-Turbo ~22sn)</button>
+      <button class="btn btn-primary" id="btnGenFrame" onclick="runT2I()">1. Generate First Frame (Z-Image-Turbo ~22s)</button>
       <div class="studio-actions hidden" id="studioApproveRow">
-        <button class="btn btn-secondary" onclick="runT2I(true)">Yeni Seed</button>
-        <button class="btn btn-primary" onclick="runVideo(true)">2. Videoya Çevir ▶</button>
+        <button class="btn btn-secondary" onclick="runT2I(true)">New Seed</button>
+        <button class="btn btn-primary" onclick="runVideo(true)">2. Animate to Video ▶</button>
       </div>
     </div>
-    <button class="btn btn-primary hidden" id="btnGenVideo" onclick="runVideo(false)">Video Üret ▶</button>
-    <button class="btn btn-danger hidden" id="btnCancel" onclick="cancelJob()">■ Üretimi Durdur</button>
+    <button class="btn btn-primary hidden" id="btnGenVideo" onclick="runVideo(false)">Generate Video ▶</button>
+    <button class="btn btn-danger hidden" id="btnCancel" onclick="cancelJob()">■ Stop Generation</button>
   </section>
 
   <section class="stage-box">
     <div class="card">
       <div class="preview-frame" id="previewBox">
-        <div class="empty-hint">Burada üretilen ilk kare veya bitmiş H.264 videonuz görünecek.<br><small>Stüdyo Modu ile 22 saniyede ilk kareyi onaylayıp sonra 5–15 sn videoya çevirebilirsiniz.</small></div>
+        <div class="empty-hint">Your generated first frame or final H.264 video will appear here.<br><small>In Studio Mode, approve a first frame in ~22s and then animate it into a 5–15s video.</small></div>
       </div>
       <div class="prog-wrap" style="margin-top:14px">
-        <div class="prog-head"><span id="stTitle">Hazır</span><span id="stPct">0%</span></div>
+        <div class="prog-head"><span id="stTitle">Ready</span><span id="stPct">0%</span></div>
         <div class="pbar"><div class="pbar-fill" id="stBar"></div></div>
-        <div id="stDetail" style="font-size:12px;color:var(--muted);margin-top:6px">Yeni üretim için hazır.</div>
-        <div class="logbox" id="logBox">PicoVid Web Studio hazır.</div>
+        <div id="stDetail" style="font-size:12px;color:var(--muted);margin-top:6px">Ready for a new generation.</div>
+        <div class="logbox" id="logBox">PicoVid Web Studio ready.</div>
       </div>
     </div>
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <strong style="font-size:14px">Son Çıktılar (Galeri)</strong>
-        <button class="chip" onclick="loadGallery()">↻ Yenile</button>
+        <strong style="font-size:14px">Recent Outputs (Gallery)</strong>
+        <button class="chip" onclick="loadGallery()">↻ Refresh</button>
       </div>
       <div class="gallery" id="gallery"></div>
     </div>
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <strong style="font-size:14px">🎞 Zaman Çizelgesi (Çoklu Klip Kurgu &amp; Geçişler)</strong>
-        <button class="chip" onclick="clearTimeline()">Temizle</button>
+        <strong style="font-size:14px">🎞 Timeline (Multi-Clip Editor &amp; Transitions)</strong>
+        <button class="chip" onclick="clearTimeline()">Clear</button>
       </div>
       <div id="tlList" style="display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:12px;color:var(--muted)">
-        Galerideki videolardan <b>+ Kurgu</b> ile klip ekleyin.
+        Click <b>+ Timeline</b> on clips in the gallery above to queue them.
       </div>
       <div class="row2" style="margin-top:10px">
         <div>
-          <label style="margin-top:0">Geçiş Efekti (xfade + stereo acrossfade)</label>
+          <label style="margin-top:0">Transition Effect (xfade + stereo acrossfade)</label>
           <select id="tlTrans">
-            <option value="dissolve" selected>Yumuşak Geçiş (Dissolve)</option>
-            <option value="fadeblack">Siyaha Kararma (Fade Black)</option>
-            <option value="wipeleft">Sola Silme (Wipe Left)</option>
-            <option value="smoothleft">Akıcı Kayma (Smooth Left)</option>
-            <option value="circleopen">İris Açılış (Circle Open)</option>
-            <option value="cut">Keskin Kesim (Cut)</option>
+            <option value="dissolve" selected>Dissolve</option>
+            <option value="fadeblack">Fade Black</option>
+            <option value="wipeleft">Wipe Left</option>
+            <option value="smoothleft">Smooth Left</option>
+            <option value="circleopen">Circle Open</option>
+            <option value="cut">Hard Cut</option>
           </select>
         </div>
         <div>
-          <label style="margin-top:0">Geçiş Süresi</label>
+          <label style="margin-top:0">Transition Duration</label>
           <select id="tlDur">
-            <option value="0.4">0.4 sn (Hızlı)</option>
-            <option value="0.6" selected>0.6 sn (Sinematik)</option>
-            <option value="1.0">1.0 sn (Yavaş)</option>
+            <option value="0.4">0.4s (Fast)</option>
+            <option value="0.6" selected>0.6s (Cinematic)</option>
+            <option value="1.0">1.0s (Slow)</option>
           </select>
         </div>
       </div>
-      <button class="btn btn-primary" id="btnRenderTl" onclick="renderTimeline()" style="margin-top:10px">▶ Kurguyu Birleştir (Ses + Video MP4)</button>
+      <button class="btn btn-primary" id="btnRenderTl" onclick="renderTimeline()" style="margin-top:10px">▶ Render Timeline (Audio + Video MP4)</button>
       <div id="tlStatus" style="font-size:12px;color:var(--accent);margin-top:6px"></div>
     </div>
   </section>
@@ -645,23 +645,23 @@ function onEngineChange() {
   const sel = document.getElementById('durationPreset');
   if (eng === 'ltx23') {
     sel.innerHTML = `
-      <option value="81:1:16" selected>5.1 sn (81f @16fps · Ses+Video) ★</option>
-      <option value="49:1:16">3.1 sn (49f @16fps · Ses+Video)</option>
-      <option value="25:1:24">1.0 sn (25f @24fps · Hızlı Test)</option>
-      <option value="121:1:24">5.0 sn (121f @24fps · Maksimum)</option>`;
+      <option value="81:1:16" selected>5.1s (81f @16fps · Audio+Video) ★</option>
+      <option value="49:1:16">3.1s (49f @16fps · Audio+Video)</option>
+      <option value="25:1:24">1.0s (25f @24fps · Quick Test)</option>
+      <option value="121:1:24">5.0s (121f @24fps · Maximum)</option>`;
   } else if (eng === '5b') {
     sel.innerHTML = `
-      <option value="81:1:16" selected>5.1 sn (81f · ~4.8 dk) ★</option>
-      <option value="49:1:16">3.1 sn (49f · ~3.0 dk)</option>
-      <option value="81:2:16">10.1 sn (2×81f Zincir · ~9.6 dk)</option>
-      <option value="81:3:16">15.1 sn (3×81f Zincir · ~14.4 dk)</option>
-      <option value="121:1:24">5.0 sn (121f @24fps native)</option>`;
+      <option value="81:1:16" selected>5.1s (81f · ~4.8m) ★</option>
+      <option value="49:1:16">3.1s (49f · ~3.0m)</option>
+      <option value="81:2:16">10.1s (2×81f Chain · ~9.6m)</option>
+      <option value="81:3:16">15.1s (3×81f Chain · ~14.4m)</option>
+      <option value="121:1:24">5.0s (121f @24fps native)</option>`;
   } else {
     sel.innerHTML = `
-      <option value="17:1:16" selected>1.1 sn (17f · ~4.5 dk)</option>
-      <option value="33:1:16">2.1 sn (33f · ~8.5 dk)</option>
-      <option value="49:1:16">3.1 sn (49f · ~14 dk)</option>
-      <option value="33:2:16">4.1 sn (2×33f Zincir · ~17 dk)</option>`;
+      <option value="17:1:16" selected>1.1s (17f · ~4.5m)</option>
+      <option value="33:1:16">2.1s (33f · ~8.5m)</option>
+      <option value="49:1:16">3.1s (49f · ~14m)</option>
+      <option value="33:2:16">4.1s (2×33f Chain · ~17m)</option>`;
   }
   toggleSegPrompts();
 }
@@ -687,7 +687,7 @@ async function uploadImage(file) {
     const d = await r.json();
     if (d.ok) {
       uploadedPath = d.rel_path;
-      document.getElementById('dropText').textContent = 'Yüklendi: ' + file.name;
+      document.getElementById('dropText').textContent = 'Uploaded: ' + file.name;
       const img = document.getElementById('uploadPreview');
       img.src = d.url; img.classList.remove('hidden');
     } else if (d.error) {
@@ -702,7 +702,7 @@ async function runT2I(reroll=false) {
   const seedRaw = reroll ? '' : document.getElementById('seed').value.trim();
   const r = await apiPost('/api/t2i', {prompt: document.getElementById('prompt').value.trim(), width:w, height:h, seed: seedRaw ? parseInt(seedRaw) : null});
   const d = await r.json();
-  if (!d.ok) alert(d.error || 'Başlatılamadı');
+  if (!d.ok) alert(d.error || 'Failed to start');
 }
 
 async function runVideo(fromStudio) {
@@ -710,7 +710,7 @@ async function runVideo(fromStudio) {
   const [frames, segments, fps] = document.getElementById('durationPreset').value.split(':').map(Number);
   const seedRaw = document.getElementById('seed').value.trim();
   const initPath = fromStudio ? studioFramePath : (curMode === 'i2v' ? uploadedPath : null);
-  if ((fromStudio || curMode === 'i2v') && !initPath) { alert('Önce bir giriş görseli üretin veya yükleyin.'); return; }
+  if ((fromStudio || curMode === 'i2v') && !initPath) { alert('Generate or upload an input image first.'); return; }
   const r = await apiPost('/api/generate', {
     engine: document.getElementById('engine').value,
     mode: (fromStudio || curMode === 'i2v') ? 'i2v' : 't2v',
@@ -723,7 +723,7 @@ async function runVideo(fromStudio) {
     seed: seedRaw ? parseInt(seedRaw) : null
   });
   const d = await r.json();
-  if (!d.ok) alert(d.error || 'Başlatılamadı');
+  if (!d.ok) alert(d.error || 'Failed to start');
 }
 
 async function cancelJob() {
@@ -743,17 +743,17 @@ async function loadModelsStatus() {
     const defs = [['ltx23','LTX-2.3 22B'], ['t2i','Z-Image T2I']];
     document.getElementById('modelBadges').innerHTML = defs.map(([k, lbl]) => {
       const info = m[k]; if (!info) return '';
-      if (info.ready) return `<span class="mbadge ok" title="${lbl} kurulu">${lbl} ✓</span>`;
-      return `<span class="mbadge miss" title="İndirmek için tıklayın (${info.remaining_gib} GiB)" onclick="downloadProfile('${k}', ${info.remaining_gib})">${lbl} ↓ ${info.remaining_gib}G</span>`;
+      if (info.ready) return `<span class="mbadge ok" title="${lbl} installed">${lbl} ✓</span>`;
+      return `<span class="mbadge miss" title="Click to download (${info.remaining_gib} GiB)" onclick="downloadProfile('${k}', ${info.remaining_gib})">${lbl} ↓ ${info.remaining_gib}G</span>`;
     }).join('');
   } catch(e) {}
 }
 
 async function downloadProfile(profile, gib) {
-  if (!confirm(`'${profile}' modeli (~${gib} GiB) şimdi indirilsin mi?`)) return;
+  if (!confirm(`Download '${profile}' model (~${gib} GiB) now?`)) return;
   const r = await apiPost('/api/download-model', {profile});
   const d = await r.json();
-  if (!d.ok) alert(d.error || 'İndirme başlatılamadı');
+  if (!d.ok) alert(d.error || 'Failed to start download');
 }
 
 async function extendVideo(relPath, ev) {
@@ -762,7 +762,7 @@ async function extendVideo(relPath, ev) {
   const eng = document.getElementById('engine').value;
   const frames = eng === '5b' ? 81 : 33;
   const promptTxt = document.getElementById('prompt').value.trim() || 'Continue smooth natural cinematic camera motion, 35mm film';
-  if (!confirm(`"${relPath.split('/').pop()}" videosu son karesinden +${(frames/16).toFixed(1)} sn uzatılsın mı?`)) return;
+  if (!confirm(`Extend "${relPath.split('/').pop()}" by +${(frames/16).toFixed(1)}s from its last frame?`)) return;
   const r = await apiPost('/api/extend', {
     base_video: relPath, engine: eng, prompt: promptTxt,
     width: w, height: h, frames, fps: 16,
@@ -770,7 +770,7 @@ async function extendVideo(relPath, ev) {
     fast_preview: document.getElementById('fastPreview').checked
   });
   const d = await r.json();
-  if (!d.ok) alert(d.error || 'Uzatma başlatılamadı');
+  if (!d.ok) alert(d.error || 'Failed to start extension');
 }
 
 let timelineClips = [];
@@ -790,7 +790,7 @@ function clearTimeline() { timelineClips = []; renderTimelineList(); document.ge
 function renderTimelineList() {
   const el = document.getElementById('tlList');
   if (!timelineClips.length) {
-    el.innerHTML = 'Galerideki videolardan <b>+ Kurgu</b> ile klip ekleyin.';
+    el.innerHTML = 'Click <b>+ Timeline</b> on clips in the gallery above to queue them.';
     return;
   }
   el.innerHTML = timelineClips.map((c, i) => `
@@ -803,10 +803,10 @@ function renderTimelineList() {
     </div>`).join('');
 }
 async function renderTimeline() {
-  if (timelineClips.length < 1) { alert('Önce zaman çizelgesine en az 1 video ekleyin.'); return; }
+  if (timelineClips.length < 1) { alert('Add at least 1 video to the timeline first.'); return; }
   const btn = document.getElementById('btnRenderTl');
   const st = document.getElementById('tlStatus');
-  btn.disabled = true; st.textContent = 'Kurgu birleştiriliyor (xfade + 48kHz stereo)...';
+  btn.disabled = true; st.textContent = 'Rendering timeline (xfade + 48kHz stereo)...';
   try {
     const r = await apiPost('/api/timeline/render', {
       clips: timelineClips.map(c => ({rel: c.rel})),
@@ -815,11 +815,11 @@ async function renderTimeline() {
     });
     const d = await r.json();
     if (d.ok) {
-      st.textContent = `✓ Hazır: ${d.name} (${d.duration_sec}s · ${d.resolution} · ${d.size_mb} MB)`;
+      st.textContent = `✓ Ready: ${d.name} (${d.duration_sec}s · ${d.resolution} · ${d.size_mb} MB)`;
       showInPreview(d.url + '?t=' + Date.now(), 'video');
       loadGallery();
     } else {
-      st.textContent = 'Hata: ' + (d.error || 'Kurgu başarısız');
+      st.textContent = 'Error: ' + (d.error || 'Timeline render failed');
     }
   } finally { btn.disabled = false; }
 }
@@ -833,9 +833,9 @@ async function loadGallery() {
       ${it.kind === 'video' ? `<video src="${it.url}" muted preload="metadata"></video>` : `<img src="${it.url}">`}
       <div class="gfoot">
         <div class="gmeta" title="${it.name}">${it.name} · ${it.size_mb}M</div>
-        ${it.kind === 'video' ? `<button class="ext-btn" title="Zaman çizelgesine ekle" onclick="addToTimeline('${it.rel}','${it.name}', event)">+ Kurgu</button>` : ''}
+        ${it.kind === 'video' ? `<button class="ext-btn" title="Add to timeline" onclick="addToTimeline('${it.rel}','${it.name}', event)">+ Timeline</button>` : ''}
       </div>
-    </div>`).join('') || '<div style="color:var(--muted);font-size:12px">Henüz çıktı yok.</div>';
+    </div>`).join('') || '<div style="color:var(--muted);font-size:12px">No outputs yet.</div>';
 }
 
 let lastShownT2I = null, lastShownVid = null;
@@ -848,7 +848,7 @@ async function pollStatus() {
     document.getElementById('stBar').style.width = `${s.progress_pct}%`;
     document.getElementById('stDetail').textContent = s.detail || '';
     const lb = document.getElementById('logBox');
-    lb.textContent = (s.logs || []).slice(-18).join('\n') || 'Hazır.';
+    lb.textContent = (s.logs || []).slice(-18).join('\n') || 'Ready.';
     lb.scrollTop = lb.scrollHeight;
 
     document.getElementById('btnCancel').classList.toggle('hidden', !s.running);
@@ -906,7 +906,7 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
 
         def _check_localhost_host(self) -> bool:
             if not _is_localhost_host(self.headers.get("Host", "")):
-                self._send_json({"ok": False, "error": "Yasak Host başlığı"}, 403)
+                self._send_json({"ok": False, "error": "Forbidden Host header"}, 403)
                 return False
             return True
 
@@ -915,26 +915,26 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 return False
             origin = self.headers.get("Origin", "")
             if origin and not _is_localhost_origin(origin):
-                self._send_json({"ok": False, "error": "Yasak Origin"}, 403)
+                self._send_json({"ok": False, "error": "Forbidden Origin"}, 403)
                 return False
             ctype = (self.headers.get("Content-Type") or "").lower()
             if not ctype.startswith("application/json"):
-                self._send_json({"ok": False, "error": "Content-Type application/json olmalı"}, 415)
+                self._send_json({"ok": False, "error": "Content-Type must be application/json"}, 415)
                 return False
             tok = self.headers.get("X-PicoVid-Token", "")
             if not secrets.compare_digest(tok, state.csrf_token):
-                self._send_json({"ok": False, "error": "Geçersiz veya eksik oturum belirteci (CSRF)"}, 403)
+                self._send_json({"ok": False, "error": "Invalid or missing session token (CSRF)"}, 403)
                 return False
             return True
 
         def _read_json(self) -> dict[str, Any]:
             n = int(self.headers.get("Content-Length", "0"))
             if n < 0 or n > MAX_JSON_BODY_BYTES:
-                raise ValueError(f"İstek gövdesi çok büyük ({n} bayt)")
+                raise ValueError(f"Request body too large ({n} bytes)")
             raw = self.rfile.read(n) if n > 0 else b"{}"
             obj = json.loads(raw.decode("utf-8"))
             if not isinstance(obj, dict):
-                raise ValueError("JSON gövdesi nesne olmalı")
+                raise ValueError("JSON body must be an object")
             return obj
 
         def do_GET(self) -> None:
@@ -992,10 +992,10 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
             try:
                 body = self._read_json()
             except ValueError as exc:
-                self._send_json({"ok": False, "error": str(exc)}, 413 if "büyük" in str(exc) else 400)
+                self._send_json({"ok": False, "error": str(exc)}, 413 if "too large" in str(exc).lower() else 400)
                 return
             except Exception as exc:
-                self._send_json({"ok": False, "error": f"Geçersiz JSON: {exc}"}, 400)
+                self._send_json({"ok": False, "error": f"Invalid JSON: {exc}"}, 400)
                 return
 
             if path == "/api/cancel":
@@ -1009,19 +1009,19 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 name = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name)
                 ext = pathlib.Path(name).suffix.lower()
                 if ext not in ALLOWED_IMAGE_EXTS:
-                    self._send_json({"ok": False, "error": "Yalnızca PNG, JPG veya WEBP görselleri yüklenebilir."}, 400)
+                    self._send_json({"ok": False, "error": "Only PNG, JPG, or WEBP images can be uploaded."}, 400)
                     return
                 if "," not in data_url:
-                    self._send_json({"ok": False, "error": "Geçersiz data_url"}, 400)
+                    self._send_json({"ok": False, "error": "Invalid data_url"}, 400)
                     return
                 b64 = data_url.split(",", 1)[1]
                 try:
                     img_bytes = base64.b64decode(b64, validate=True)
                 except Exception:
-                    self._send_json({"ok": False, "error": "Geçersiz base64 görsel verisi"}, 400)
+                    self._send_json({"ok": False, "error": "Invalid base64 image data"}, 400)
                     return
                 if len(img_bytes) > MAX_UPLOAD_IMAGE_BYTES:
-                    self._send_json({"ok": False, "error": "Görsel boyutu 15 MiB sınırını aşıyor."}, 413)
+                    self._send_json({"ok": False, "error": "Image size exceeds the 15 MiB limit."}, 413)
                     return
                 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1034,14 +1034,14 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
             if path == "/api/timeline/render":
                 raw_clips = list(body.get("clips") or [])
                 if not raw_clips:
-                    self._send_json({"ok": False, "error": "En az 1 klip seçin."}, 400)
+                    self._send_json({"ok": False, "error": "Select at least 1 clip."}, 400)
                     return
                 resolved_clips: list[dict[str, Any]] = []
                 for c in raw_clips:
                     rel = str(c.get("rel") or "").lstrip("/")
                     abs_p = _resolve_media_path(rel, ALLOWED_VIDEO_EXTS)
                     if abs_p is None:
-                        self._send_json({"ok": False, "error": f"Geçersiz klip yolu: {rel}"}, 403)
+                        self._send_json({"ok": False, "error": f"Invalid clip path: {rel}"}, 403)
                         return
                     resolved_clips.append({
                         "path": abs_p,
@@ -1074,7 +1074,7 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 profile = str(body.get("profile", "ltx23")).strip()
                 valid_profiles = set(download_models.load_registry().get("download_profiles", {}).keys())
                 if profile not in valid_profiles:
-                    self._send_json({"ok": False, "error": f"Geçersiz model profili: {profile}"}, 400)
+                    self._send_json({"ok": False, "error": f"Invalid model profile: {profile}"}, 400)
                     return
                 cmd = [sys.executable, str(SCRIPT_DIR / "download_models.py"), "--profile", profile]
                 ok, msg = state.start_job("download", cmd, "")
@@ -1085,11 +1085,11 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 base_rel = str(body.get("base_video", "")).lstrip("/")
                 base_abs = _resolve_media_path(base_rel, ALLOWED_VIDEO_EXTS)
                 if base_abs is None:
-                    self._send_json({"ok": False, "error": "Uzatılacak video bulunamadı veya izin dışı."}, 404)
+                    self._send_json({"ok": False, "error": "Video to extend not found or outside allowed directory."}, 404)
                     return
                 engine = str(body.get("engine", "5b"))
                 if engine not in ALLOWED_ENGINES:
-                    self._send_json({"ok": False, "error": f"Geçersiz motor: {engine}"}, 400)
+                    self._send_json({"ok": False, "error": f"Invalid engine: {engine}"}, 400)
                     return
                 prompt = str(body.get("prompt") or "Continue smooth natural cinematic camera motion, 35mm film").strip()
                 w = max(64, min(2048, int(body.get("width", 640))))
@@ -1138,10 +1138,10 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 engine = str(body.get("engine", "ltx23"))
                 mode = str(body.get("mode", "t2v"))
                 if engine not in ALLOWED_ENGINES:
-                    self._send_json({"ok": False, "error": f"Geçersiz motor: {engine}"}, 400)
+                    self._send_json({"ok": False, "error": f"Invalid engine: {engine}"}, 400)
                     return
                 if mode not in ALLOWED_MODES:
-                    self._send_json({"ok": False, "error": f"Geçersiz mod: {mode}"}, 400)
+                    self._send_json({"ok": False, "error": f"Invalid mode: {mode}"}, 400)
                     return
                 prompt = str(body.get("prompt") or ui_console.DEFAULT_SAMPLE_PROMPT).strip()
                 w = max(64, min(2048, int(body.get("width", 640))))
@@ -1158,7 +1158,7 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 if mode == "i2v" and init_img:
                     init_img_resolved = _resolve_media_path(str(init_img), ALLOWED_IMAGE_EXTS)
                     if init_img_resolved is None:
-                        self._send_json({"ok": False, "error": "Geçersiz giriş görseli yolu (outputs/ içinde PNG/JPG/WEBP olmalı)."}, 403)
+                        self._send_json({"ok": False, "error": "Invalid input image path (must be a PNG/JPG/WEBP inside outputs/)."}, 403)
                         return
 
                 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1194,7 +1194,7 @@ def make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
 
 def main() -> int:
     ui_console.configure_console_utf8()
-    parser = argparse.ArgumentParser(description="PicoVid v0.4.0 Local Web Studio")
+    parser = argparse.ArgumentParser(description="PicoVid v0.7.0 Local Web Studio")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--no-browser", action="store_true", help="Do not auto-open browser")
@@ -1203,14 +1203,14 @@ def main() -> int:
     state = StudioState()
     server = ThreadingHTTPServer((args.host, args.port), make_handler(state))
     url = f"http://{args.host}:{args.port}"
-    print(f"[PicoVid Web Studio] Hazır -> {url}  (GPU: {state.hw['gpu_name']} · {state.hw['backend'].upper()})", flush=True)
-    print("[PicoVid Web Studio] Kapatmak için Ctrl+C basın.", flush=True)
+    print(f"[PicoVid Web Studio] Ready -> {url}  (GPU: {state.hw['gpu_name']} · {state.hw['backend'].upper()})", flush=True)
+    print("[PicoVid Web Studio] Press Ctrl+C to stop.", flush=True)
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[PicoVid Web Studio] Kapatılıyor...")
+        print("\n[PicoVid Web Studio] Shutting down...")
     finally:
         server.server_close()
         state.shutdown()

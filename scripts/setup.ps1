@@ -25,7 +25,7 @@ function Refresh-EnvPath {
 
 function Ensure-Winget {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host "[UYARI] winget bulunamadi (App Installer). Eksik araclari manuel kurmaniz gerekebilir." -ForegroundColor Yellow
+        Write-Host "[WARN] winget not found (App Installer). You may need to install missing tools manually." -ForegroundColor Yellow
         return $false
     }
     return $true
@@ -72,7 +72,7 @@ function Install-VCToolsSafe {
         if ($existing) {
             $instPath = (@($existing) | Where-Object { $_ -and $_.Trim() } | Select-Object -First 1).Trim()
             if ($instPath -and (Test-Path $instPath)) {
-                Write-Host "      Mevcut Visual Studio ($instPath) uzerine C++ Build Tools ekleniyor..." -ForegroundColor Cyan
+                Write-Host "      Adding C++ Build Tools to existing Visual Studio ($instPath)..." -ForegroundColor Cyan
                 $p = Start-Process -FilePath $vsInstaller -ArgumentList @(
                     "modify", "--installPath", "`"$instPath`"",
                     "--add", "Microsoft.VisualStudio.Workload.VCTools",
@@ -87,7 +87,7 @@ function Install-VCToolsSafe {
     }
 
     if (Ensure-Winget) {
-        Write-Host "      Visual Studio 2022 Build Tools (C++ + CMake) kuruluyor..." -ForegroundColor Cyan
+        Write-Host "      Installing Visual Studio 2022 Build Tools (C++ + CMake)..." -ForegroundColor Cyan
         winget install -e --id Microsoft.VisualStudio.2022.BuildTools --accept-package-agreements --accept-source-agreements --override "--passive --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended" | Out-Null
         Refresh-EnvPath
         $vc = Find-VCVars
@@ -130,8 +130,8 @@ function Try-DownloadPrebuiltBinary {
     $tmpZip = Join-Path $env:TEMP $PrebuiltAsset
     if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
 
-    Write-Host "`n[Hizli Kurulum] Hazir derlenmis sd-cli.exe ($ReleaseTag · Vulkan — AMD/Intel/NVIDIA uyumlu) indiriliyor..." -ForegroundColor Cyan
-    Write-Host "                (Visual Studio / C++ / SDK derlemesine gerek kalmaz!)" -ForegroundColor Green
+    Write-Host "`n[Fast Setup] Downloading prebuilt sd-cli.exe ($ReleaseTag · Vulkan — AMD/Intel/NVIDIA compatible)..." -ForegroundColor Cyan
+    Write-Host "             (No Visual Studio / C++ / SDK compilation needed!)" -ForegroundColor Green
 
     $downloaded = $false
 
@@ -206,7 +206,7 @@ with opener.open(dl_req, timeout=120) as resp, open(out_path, "wb") as fh:
 
     if (-not $downloaded) {
         Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
-        Write-Host "  [UYARI] Hazir binary indirilemedi (private repo ise 'git pull' kimligi veya 'gh auth login' gerekir)." -ForegroundColor Yellow
+        Write-Host "  [WARN] Could not download prebuilt binary (for private repos, ensure git credentials or 'gh auth login')." -ForegroundColor Yellow
         return $false
     }
 
@@ -214,7 +214,7 @@ with opener.open(dl_req, timeout=120) as resp, open(out_path, "wb") as fh:
     Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
     $exePath = Join-Path $DestBinDir "sd-cli.exe"
     if (Test-Path $exePath) {
-        Write-Host "  [OK] Hazir sd-cli.exe indirildi ve kuruldu: $exePath" -ForegroundColor Green
+        Write-Host "  [OK] Prebuilt sd-cli.exe downloaded and installed: $exePath" -ForegroundColor Green
         return $true
     }
     return $false
@@ -222,7 +222,7 @@ with opener.open(dl_req, timeout=120) as resp, open(out_path, "wb") as fh:
 
 Write-Host ""
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "  PicoVid v0.5.1 · Sifirdan Otomatik Kurulum Sihirbazi (Windows)" -ForegroundColor Cyan
+Write-Host "  PicoVid v0.7.0 · Zero-to-Ready Setup Wizard (Windows)" -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 
 $targetBackend = Detect-TargetBackend
@@ -234,43 +234,43 @@ $sdkPath       = if ($targetBackend -eq "cuda") { Find-CudaNvcc } else { Find-Vu
 $hasBin        = (Test-Path $sdCliPath) -or (Test-Path (Join-Path $RepoRoot "build\sdcpp-vulkan\bin\sd-cli.exe"))
 $hasRealesrgan = Test-Path (Join-Path $RepoRoot "tools\realesrgan\realesrgan-ncnn-vulkan.exe")
 
-Write-Host ("  Hedef Backend       : " + $targetBackend.ToUpper() + $(if (-not $BuildFromSource -and $targetBackend -eq "vulkan") { " (Hazir binary — VS C++ gerekmez!)" } else { "" })) -ForegroundColor Green
-Write-Host ("  [1] Git             : " + $(if ($hasGit) { "HAZIR" } else { "EKSIK (kurulacak)" }))
-Write-Host ("  [2] Python 3        : " + $(if ($pyCmd) { "HAZIR ($pyCmd)" } else { "EKSIK (kurulacak)" }))
-Write-Host ("  [3] sd-cli.exe      : " + $(if ($hasBin) { "HAZIR" } elseif (-not $BuildFromSource -and $targetBackend -eq "vulkan") { "HAZIR BINARY INDIRILECEK (~30 MB)" } else { "KAYNAKTAN DERLENECEK" }))
-Write-Host ("  [4] Cinema HD Tool  : " + $(if ($hasRealesrgan) { "HAZIR" } else { "INDIRILECEK (43 MB)" }))
+Write-Host ("  Target Backend      : " + $targetBackend.ToUpper() + $(if (-not $BuildFromSource -and $targetBackend -eq "vulkan") { " (Prebuilt binary — no VS C++ needed!)" } else { "" })) -ForegroundColor Green
+Write-Host ("  [1] Git             : " + $(if ($hasGit) { "READY" } else { "MISSING (will install)" }))
+Write-Host ("  [2] Python 3        : " + $(if ($pyCmd) { "READY ($pyCmd)" } else { "MISSING (will install)" }))
+Write-Host ("  [3] sd-cli.exe      : " + $(if ($hasBin) { "READY" } elseif (-not $BuildFromSource -and $targetBackend -eq "vulkan") { "PREBUILT DOWNLOAD (~30 MB)" } else { "BUILD FROM SOURCE" }))
+Write-Host ("  [4] Cinema HD Tool  : " + $(if ($hasRealesrgan) { "READY" } else { "WILL DOWNLOAD (43 MB)" }))
 Write-Host "=================================================================" -ForegroundColor Cyan
 
 if ($CheckOnly) {
-    Write-Host "[CHECK-ONLY] Donanim & on-kosul kontrolu tamamlandi." -ForegroundColor Yellow
+    Write-Host "[CHECK-ONLY] Hardware & prerequisite check complete." -ForegroundColor Yellow
     exit 0
 }
 
 # 1. Git
 if (-not $hasGit) {
-    Write-Host "`n[1/5] Git kuruluyor..." -ForegroundColor Cyan
+    Write-Host "`n[1/5] Installing Git..." -ForegroundColor Cyan
     if (Ensure-Winget) {
         winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
         Refresh-EnvPath
-    } else { throw "Git kurulu degil: https://git-scm.com/download/win" }
+    } else { throw "Git is not installed: https://git-scm.com/download/win" }
 }
 
 # 2. Python 3.12
 if (-not $pyCmd) {
-    Write-Host "`n[2/5] Python 3.12 kuruluyor..." -ForegroundColor Cyan
+    Write-Host "`n[2/5] Installing Python 3.12..." -ForegroundColor Cyan
     if (Ensure-Winget) {
         winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
         Refresh-EnvPath
         $pyCmd = Find-Python
     }
-    if (-not $pyCmd) { throw "Python kuruldu ama PATH guncellenemedi. Terminali kapatip yeniden acin ve setup.cmd'yi tekrar calistirin." }
+    if (-not $pyCmd) { throw "Python installed but PATH did not refresh. Reopen your terminal and run setup.cmd again." }
 }
 
 # 3. Python packages
-Write-Host "`n[3/5] Python paketleri (requirements.txt) kontrol ediliyor..." -ForegroundColor Cyan
+Write-Host "`n[3/5] Checking Python packages (requirements.txt)..." -ForegroundColor Cyan
 & $pyCmd -m pip install --upgrade pip --quiet 2>$null
 & $pyCmd -m pip install -r (Join-Path $RepoRoot "requirements.txt")
-if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt basarisiz oldu!" }
+if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt failed!" }
 
 # 4. Get sd-cli.exe: try prebuilt binary FIRST (zero VS/C++/SDK needed!), fallback to local build
 if (-not $hasBin) {
@@ -280,11 +280,11 @@ if (-not $hasBin) {
     }
 
     if (-not $gotPrebuilt) {
-        Write-Host "`n[4/5] Hazir binary indirilemedi veya -BuildFromSource secildi; kaynaktan derleniyor..." -ForegroundColor Yellow
+        Write-Host "`n[4/5] Prebuilt binary unavailable or -BuildFromSource requested; building from source..." -ForegroundColor Yellow
         if (-not $vcVars) {
             $vcVars = Install-VCToolsSafe
             if (-not $vcVars) {
-                throw "Visual Studio C++ Build Tools (vcvars64.bat) bulunamadi. Visual Studio Installer -> Modify -> 'Desktop development with C++' secip tekrar deneyin."
+                throw "Visual Studio C++ Build Tools (vcvars64.bat) not found. Open Visual Studio Installer -> Modify -> select 'Desktop development with C++' and retry."
             }
         }
         if (-not $sdkPath) {
@@ -303,50 +303,50 @@ if (-not $hasBin) {
         $srcDir = Join-Path $RepoRoot "third_party\stable-diffusion.cpp"
         if (-not (Test-Path (Join-Path $srcDir ".git"))) {
             git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/leejet/stable-diffusion.cpp.git $srcDir
-            if ($LASTEXITCODE -ne 0) { throw "git clone basarisiz!" }
+            if ($LASTEXITCODE -ne 0) { throw "git clone failed!" }
             git -C $srcDir fetch --depth 1 origin 3b12781 2>$null
             git -C $srcDir checkout 3b12781
         }
         powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\apply_patches.ps1") -CheckOnly *> $null
         if ($LASTEXITCODE -eq 0) {
             powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\apply_patches.ps1")
-            if ($LASTEXITCODE -ne 0) { throw "apply_patches.ps1 basarisiz!" }
+            if ($LASTEXITCODE -ne 0) { throw "apply_patches.ps1 failed!" }
         }
         powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\build.ps1") -Backend $targetBackend
-        if ($LASTEXITCODE -ne 0) { throw "build.ps1 basarisiz!" }
+        if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed!" }
     }
 } else {
-    Write-Host "`n[4/5] sd-cli.exe zaten hazir." -ForegroundColor Green
+    Write-Host "`n[4/5] sd-cli.exe is already installed." -ForegroundColor Green
 }
 
 # 4b. Install LTX-2.3 Vulkan prebuilt engine (29.6 MB, zero compilation needed!)
 $ltxDir = Join-Path $RepoRoot "engine\sd-vulkan-ltx2"
 $ltxExe = Join-Path $ltxDir "sd-cli.exe"
 if (-not (Test-Path $ltxExe)) {
-    Write-Host "`n[4b/5] LTX-2.3 Vulkan motoru indiriliyor (~30 MB, derleme gerekmez)..." -ForegroundColor Cyan
+    Write-Host "`n[4b/5] Downloading LTX-2.3 Vulkan engine (~30 MB, zero compilation needed)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $ltxDir | Out-Null
     $ltxZip = Join-Path $ltxDir "sd-ltx2-win-vulkan.zip"
     curl.exe -fL --retry 3 -sS -o $ltxZip $Ltx2PrebuiltUrl
     if ($LASTEXITCODE -eq 0 -and (Test-Path $ltxZip)) {
         Expand-Archive -Path $ltxZip -DestinationPath $ltxDir -Force
         Remove-Item $ltxZip -Force -ErrorAction SilentlyContinue
-        Write-Host "  [OK] LTX-2.3 Vulkan motoru hazir: $ltxExe" -ForegroundColor Green
+        Write-Host "  [OK] LTX-2.3 Vulkan engine ready: $ltxExe" -ForegroundColor Green
     } else {
-        Write-Host "  [UYARI] LTX-2.3 Vulkan motoru indirilemedi; tekrar deneyebilirsiniz." -ForegroundColor Yellow
+        Write-Host "  [WARN] Could not download LTX-2.3 Vulkan engine; you can retry later." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "`n[4b/5] LTX-2.3 Vulkan motoru zaten hazir." -ForegroundColor Green
+    Write-Host "`n[4b/5] LTX-2.3 Vulkan engine is already installed." -ForegroundColor Green
 }
 
 # 5. Cinema HD Vulkan Upscaler (43 MB)
 if (-not $hasRealesrgan) {
-    Write-Host "`n[5/5] Cinema HD Vulkan araci (realesrgan-ncnn-vulkan, 43 MB) indiriliyor..." -ForegroundColor Cyan
+    Write-Host "`n[5/5] Downloading Cinema HD Vulkan tool (realesrgan-ncnn-vulkan, 43 MB)..." -ForegroundColor Cyan
     & $pyCmd (Join-Path $RepoRoot "scripts\postprocess.py") --install-tools
 }
 
 # 6. Models
 if (-not $SkipModels) {
-    Write-Host "`n[Modeller] Akilli model indirici baslatiliyor..." -ForegroundColor Cyan
+    Write-Host "`n[Models] Starting smart model downloader..." -ForegroundColor Cyan
     if ($Profile -eq "auto") {
         if ($Yes) {
             & $pyCmd (Join-Path $RepoRoot "scripts\download_models.py") --profile ltx23
@@ -357,13 +357,13 @@ if (-not $SkipModels) {
         & $pyCmd (Join-Path $RepoRoot "scripts\download_models.py") --profile $Profile
     }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[UYARI] Model indirmede sorun olustu; istediginiz zaman 'py scripts\download_models.py' ile kaldigi yerden devam edebilirsiniz." -ForegroundColor Yellow
+        Write-Host "[WARN] Model download encountered an issue; resume anytime with 'py scripts\download_models.py'." -ForegroundColor Yellow
     }
 }
 
 Write-Host ""
 Write-Host "=================================================================" -ForegroundColor Green
-Write-Host "  KURULUM TAMAMLANDI! PicoVid kullanima hazir:" -ForegroundColor Green
-Write-Host "    Terminal Sihirbazi : .\picovid.cmd" -ForegroundColor White
-Write-Host "    Web Studyosu       : .\web-studio.cmd  (veya .\picovid.cmd --web)" -ForegroundColor White
+Write-Host "  SETUP COMPLETE! PicoVid is ready to use:" -ForegroundColor Green
+Write-Host "    Terminal Wizard : .\picovid.cmd" -ForegroundColor White
+Write-Host "    Web Studio      : .\web-studio.cmd  (or .\picovid.cmd --web)" -ForegroundColor White
 Write-Host "=================================================================" -ForegroundColor Green

@@ -1,10 +1,17 @@
-# PicoVid v0.5.0
+# PicoVid v0.7.0
 
 **[English](README.md) · [Türkçe](README.tr.md)**
 
-> **Run flagship 22B Audio+Video diffusion (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Audio) & `Z-Image-Turbo` on 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — featuring 2-stage native x2 spatial latent upscaling, 4.3×–11.6× faster tiled Video VAE, Audio-Preserving Cinema HD (`1280×768 @ 32fps`), and a Multi-Clip Timeline Editor (`xfade` + stereo `acrossfade`).**
+> **Run flagship 22B Audio+Video diffusion (`LTX-2.3 Distilled v1.1` · T2V, I2V, FLF2V + 48 kHz Stereo Audio) & `Z-Image-Turbo` on 4–6 GB VRAM consumer GPUs (AMD Vulkan & NVIDIA CUDA) — featuring an English-first Local Web Studio & CLI, 2-stage native x2 spatial latent upscaling, 4.3×–11.6× faster tiled Video VAE, Audio-Preserving Cinema HD (`1280×768 @ 32fps`), and a Multi-Clip Timeline Editor (`xfade` + stereo `acrossfade`).**
 
-## What's New in v0.5.0 (LTX-2.3 22B Audio+Video Engine)
+## What's New in v0.6.0–v0.7.0
+
+- **English-First Web Studio, Terminal Dashboard, Wizard & Setup (`v0.7.0`):** `web_ui.py` (`<html lang="en">`), `ui_console.py`, `generate.py`, `postprocess.py`, `download_models.py`, `picovid.cmd`, and `setup.ps1` now default cleanly to English (while still accepting both `y/n` and `e/h` interactive confirmation keys).
+- **Web Studio Security Shield & LTX-2.3 Speed/Quality Tuning (`v0.6.0`):**
+  - Strict `Host`/`Origin`/`Content-Type`/`X-PicoVid-Token` CSRF protection, strict `OUTPUTS_DIR` + media-extension allowlist (`is_relative_to()`), SVG/HTML upload XSS block, Zip-Slip guard in `postprocess.py`, and full process-tree cancel (`taskkill /F /T /PID`).
+  - Background `start_file_prewarm` for LTX-2.3 DiT during Gemma-3 prompt encoding, `--flash-attn off` on Vulkan, `--compression-quality 100` before Cinema HD, BT.709 H.264 color tags, and zero-copy `os.replace()` frame sequencing.
+
+## Highlights from v0.5.0 (LTX-2.3 22B Audio+Video Engine)
 
 - **LTX-2.3 22B Distilled v1.1 (Default `--engine ltx23`):** Generates razor-sharp cinematic video **AND synchronized 48 kHz Stereo Audio** in 8 distilled steps (`DISTILLED_SIGMA_VALUES`) on a **6 GB AMD RX 5600 XT (Vulkan, 32 GB RAM)** via prebuilt `stable-diffusion.cpp` (`master-1133-52491bd`, zero C++ compilation needed!).
 - **Empirically Tuned 6 GB VRAM Pipeline (`~2.1×` Faster + Higher Sharpness, Zero Deadlocks):**
