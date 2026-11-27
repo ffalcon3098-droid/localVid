@@ -24,9 +24,14 @@ benchmarks/samples/
 *.png
 *.jpg
 
-# Keep curated showcase media in docs/media/
+# Keep curated showcase media in docs/media/ and docs/assets/
 !docs/media/
 !docs/media/*.png
+!docs/assets/
+!docs/assets/*.png
+!docs/assets/*.jpg
+!docs/assets/*.gif
+!docs/assets/*.svg
 
 # Python cache
 __pycache__/
