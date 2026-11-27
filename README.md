@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/ltx23_bosphorus_preview.gif" alt="Istanbul Bosphorus Sunset — LTX-2.3 22B generated locally on 6 GB VRAM" width="62%">
+  <img src="docs/assets/ltx23_bosphorus_preview.gif" alt="Bosphorus Sunset — LTX-2.3 22B generated locally on 6 GB VRAM" width="62%">
 </p>
 
 <p align="center">

@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/ltx23_bosphorus_preview.gif" alt="İstanbul Boğazı Gün Batımı — 6 GB VRAM'de yerel üretilen LTX-2.3 22B önizlemesi" width="62%">
+  <img src="docs/assets/ltx23_bosphorus_preview.gif" alt="Boğaz Gün Batımı — 6 GB VRAM'de yerel üretilen LTX-2.3 22B önizlemesi" width="62%">
 </p>
 
 <p align="center">
